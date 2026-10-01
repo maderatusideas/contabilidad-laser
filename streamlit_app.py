@@ -17,9 +17,7 @@ scopes = [
 def conectar_google():
     try:
         info_claves = dict(st.secrets["gcp_service_account"])
-        # Limpieza radical de saltos de línea y formatos
         info_claves["private_key"] = info_claves["private_key"].replace("\\n", "\n")
-        
         credenciales = Credentials.from_service_account_info(info_claves, scopes=scopes)
         return gspread.authorize(credenciales)
     except Exception as e:
@@ -32,11 +30,16 @@ if cliente:
     try:
         id_sheet = st.secrets["google_sheets"]["id_documento"]
         documento = cliente.open_by_key(id_sheet)
-        hoja_ingresos = documento.worksheet("INGRESOS")
-        hoja_gastos = documento.worksheet("GASTOS")
-        st.success("🟢 Conectado con éxito a Google Sheets")
+        
+        # SOLUCIÓN DE RAÍZ AL ERROR 404: 
+        # En vez de buscar por nombre de texto rígido, cargamos las pestañas por su orden físico (la 1ª y la 2ª)
+        hojas = documento.worksheets()
+        hoja_ingresos = hojas[0]
+        hoja_gastos = hojas[1]
+        
+        st.success(f"🟢 Conectado con éxito a: {documento.title}")
     except Exception as e:
-        st.error(f"🔴 Error de conexión con las pestañas del Excel: {e}")
+        st.error(f"🔴 Error al acceder a las pestañas del documento: {e}")
 else:
     st.error("🔴 No se ha podido validar la cuenta de servicio de Google.")
 
@@ -60,8 +63,6 @@ if "REGISTRAR VENTA" in opcion:
     
     concepto = st.text_input("Concepto del pedido:")
     total_cobrado = st.number_input("Total cobrado con IVA (€):", min_value=0.0, step=1.0)
-    
-    # NUEVO: Selector de archivos válido para fotos o PDFs en el móvil
     archivo_subido = st.file_uploader("Adjuntar Factura/Foto (PDF, JPG, PNG):", type=["pdf", "jpg", "png", "jpeg"])
     
     if st.button("🚀 Guardar e Inyectar en Excel ingresos"):
@@ -88,8 +89,6 @@ else:
     proveedor = st.text_input("Proveedor (ej: xTool, Gestor):")
     concepto_gasto = st.text_input("Concepto del gasto:")
     total_pagado = st.number_input("Total pagado (€):", min_value=0.0, step=1.0)
-    
-    # NUEVO: Selector de archivos válido para fotos o PDFs en el móvil
     archivo_subido = st.file_uploader("Adjuntar Ticket/Factura (PDF, JPG, PNG):", type=["pdf", "jpg", "png", "jpeg"])
     
     if st.button("💾 Enviar Factura a la columna Gastos"):
