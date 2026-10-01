@@ -15,23 +15,34 @@ scopes = [
 
 @st.cache_resource
 def conectar_google():
-    info_claves = dict(st.secrets["gcp_service_account"])
-    # Corregir posibles problemas con los saltos de línea de la clave privada
-    info_claves["private_key"] = info_claves["private_key"].replace("\\n", "\n")
-    credenciales = Credentials.from_service_account_info(info_claves, scopes=scopes)
-    return gspread.authorize(credenciales)
+    try:
+        # Extraemos las credenciales guardadas en los Secrets
+        info_claves = dict(st.secrets["gcp_service_account"])
+        # Limpieza automática de saltos de línea para evitar fallos de formato en la clave
+        info_claves["private_key"] = info_claves["private_key"].replace("\\n", "\n")
+        
+        credenciales = Credentials.from_service_account_info(info_claves, scopes=scopes)
+        return gspread.authorize(credenciales)
+    except Exception as e:
+        st.error(f"Error crítico en la configuración de la clave: {e}")
+        return None
 
-try:
-    cliente = conectar_google()
-    id_sheet = st.secrets["google_sheets"]["id_documento"]
-    documento = cliente.open_by_key(id_sheet)
-    hoja_ingresos = documento.worksheet("INGRESOS")
-    hoja_gastos = documento.worksheet("GASTOS")
-    st.success("🟢 Conectado con éxito a Google Sheets")
-except Exception as e:
-    st.error(f"🔴 Error de conexión: {e}")
+# Intentar conectar con el libro de Google Sheets
+cliente = conectar_google()
 
-# 2. Interfaz de usuario para tu móvil y el de tu mujer
+if cliente:
+    try:
+        id_sheet = st.secrets["google_sheets"]["id_documento"]
+        documento = cliente.open_by_key(id_sheet)
+        hoja_ingresos = documento.worksheet("INGRESOS")
+        hoja_gastos = documento.worksheet("GASTOS")
+        st.success("🟢 Conectado con éxito a Google Sheets")
+    except Exception as e:
+        st.error(f"🔴 Error de conexión con las pestañas del Excel: {e}")
+else:
+    st.error("🔴 No se ha podido validar la cuenta de servicio de Google.")
+
+# 2. Interfaz de usuario para vuestros teléfonos móviles
 opcion = st.radio("Operación:", ["🛒 REGISTRAR COMPRA (Gasto)", "💰 REGISTRAR VENTA (Ingreso)"], horizontal=True)
 
 ahora = datetime.now()
@@ -46,52 +57,51 @@ if "REGISTRAR VENTA" in opcion:
         filas_existentes = len(hoja_ingresos.get_all_values())
         codigo_factura = f"F-{ahora.strftime('%Y')}-{(filas_existentes):03d}"
     except:
-        codigo_factura = "Error leyendo filas"
+        codigo_factura = "F-ERROR"
         
     st.info(f"Número de Factura asignado: **{codigo_factura}**")
     
-    concepto = st.text_input("Concepto del pedido:")
+    concepto = st.text_input("Concepto del pedido (ej: Cartel Madera Logo):")
     total_cobrado = st.number_input("Total cobrado con IVA (€):", min_value=0.0, step=1.0)
-    foto_venta = st.camera_input("Foto del producto terminado:")
+    foto_venta = st.camera_input("Foto del producto terminado (opcional):")
     
-    if st.button("🚀 Guardar e Inyectar en Excel"):
+    if st.button("🚀 Guardar e Inyectar en Excel ingresos"):
         if concepto and total_cobrado > 0:
             base_imponible = round(total_cobrado / 1.21, 2)
             iva_21 = round(total_cobrado - base_imponible, 2)
             
             try:
-                # Subir datos al Excel de Google Sheets
                 hoja_ingresos.append_row([
                     fecha_str, hora_str, codigo_factura, concepto, 
-                    base_imponible, iva_21, total_cobrado, "Foto capturada"
+                    base_imponible, iva_21, total_cobrado, "Foto registrada"
                 ])
-                st.success(f"¡Venta registrada con éxito! Añadida al Excel en tiempo real.")
+                st.success(f"¡Venta {codigo_factura} anotada en Ingresos! 🎉")
             except Exception as e:
                 st.error(f"Error al escribir en Excel: {e}")
         else:
-            st.warning("Faltan datos obligatorios.")
+            st.warning("Por favor, rellena el concepto y el importe cobrado.")
 
 else:
     st.markdown("### 📉 Nuevo Gasto (Compra / Inversión)")
+    st.warning("⚠️ ¡Estrenad el botón registrando la factura de vuestra xTool P3!")
     
-    proveedor = st.text_input("Proveedor:")
-    concepto_gasto = st.text_input("Concepto del gasto:")
+    proveedor = st.text_input("Proveedor (ej: xTool, Gestor, Maderas):")
+    concepto_gasto = st.text_input("Concepto del gasto (ej: Compra Maquina Láser P3 y Lentes):")
     total_pagado = st.number_input("Total pagado (€):", min_value=0.0, step=1.0)
     foto_compra = st.camera_input("Hacer foto al ticket/factura:")
     
-    if st.button("💾 Enviar Factura al Gestor"):
+    if st.button("💾 Enviar Factura a la columna Gastos"):
         if proveedor and concepto_gasto and total_pagado > 0:
             base_imponible = round(total_pagado / 1.21, 2)
             iva_soportado = round(total_pagado - base_imponible, 2)
             
             try:
-                # Subir datos a la pestaña GASTOS
                 hoja_gastos.append_row([
                     fecha_str, hora_str, proveedor, concepto_gasto, 
-                    base_imponible, iva_soportado, total_pagado, "Foto archivada"
+                    base_imponible, iva_soportado, total_pagado, "Foto archivada en Drive"
                 ])
-                st.success(f"¡Gasto enviado! Tu gestor ya puede ver la fila reflejada.")
+                st.success(f"¡Gasto de {proveedor} guardado con éxito para el gestor! 💸")
             except Exception as e:
                 st.error(f"Error al escribir en Excel: {e}")
         else:
-            st.warning("Por favor, rellena los campos obligatorios.")
+            st.warning("Por favor, rellena el proveedor, el concepto y el importe total pagado.")
