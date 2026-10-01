@@ -16,9 +16,8 @@ scopes = [
 @st.cache_resource
 def conectar_google():
     try:
-        # Extraemos las credenciales guardadas en los Secrets
         info_claves = dict(st.secrets["gcp_service_account"])
-        # Limpieza automática de saltos de línea para evitar fallos de formato en la clave
+        # Limpieza radical de saltos de línea y formatos
         info_claves["private_key"] = info_claves["private_key"].replace("\\n", "\n")
         
         credenciales = Credentials.from_service_account_info(info_claves, scopes=scopes)
@@ -27,7 +26,6 @@ def conectar_google():
         st.error(f"Error crítico en la configuración de la clave: {e}")
         return None
 
-# Intentar conectar con el libro de Google Sheets
 cliente = conectar_google()
 
 if cliente:
@@ -52,7 +50,6 @@ hora_str = ahora.strftime("%H:%M:%S")
 if "REGISTRAR VENTA" in opcion:
     st.markdown("### 📈 Nuevo Ingreso (Venta)")
     
-    # Cálculo automático del número de factura correlativo leyendo el Excel
     try:
         filas_existentes = len(hoja_ingresos.get_all_values())
         codigo_factura = f"F-{ahora.strftime('%Y')}-{(filas_existentes):03d}"
@@ -61,19 +58,22 @@ if "REGISTRAR VENTA" in opcion:
         
     st.info(f"Número de Factura asignado: **{codigo_factura}**")
     
-    concepto = st.text_input("Concepto del pedido (ej: Cartel Madera Logo):")
+    concepto = st.text_input("Concepto del pedido:")
     total_cobrado = st.number_input("Total cobrado con IVA (€):", min_value=0.0, step=1.0)
-    foto_venta = st.camera_input("Foto del producto terminado (opcional):")
+    
+    # NUEVO: Selector de archivos válido para fotos o PDFs en el móvil
+    archivo_subido = st.file_uploader("Adjuntar Factura/Foto (PDF, JPG, PNG):", type=["pdf", "jpg", "png", "jpeg"])
     
     if st.button("🚀 Guardar e Inyectar en Excel ingresos"):
         if concepto and total_cobrado > 0:
             base_imponible = round(total_cobrado / 1.21, 2)
             iva_21 = round(total_cobrado - base_imponible, 2)
             
+            estado_archivo = "Archivo Adjunto" if archivo_subido is not None else "Sin Archivo"
             try:
                 hoja_ingresos.append_row([
                     fecha_str, hora_str, codigo_factura, concepto, 
-                    base_imponible, iva_21, total_cobrado, "Foto registrada"
+                    base_imponible, iva_21, total_cobrado, estado_archivo
                 ])
                 st.success(f"¡Venta {codigo_factura} anotada en Ingresos! 🎉")
             except Exception as e:
@@ -83,25 +83,28 @@ if "REGISTRAR VENTA" in opcion:
 
 else:
     st.markdown("### 📉 Nuevo Gasto (Compra / Inversión)")
-    st.warning("⚠️ ¡Estrenad el botón registrando la factura de vuestra xTool P3!")
+    st.info("💡 ¡Sube aquí el PDF de la factura de vuestra xTool P3!")
     
-    proveedor = st.text_input("Proveedor (ej: xTool, Gestor, Maderas):")
-    concepto_gasto = st.text_input("Concepto del gasto (ej: Compra Maquina Láser P3 y Lentes):")
+    proveedor = st.text_input("Proveedor (ej: xTool, Gestor):")
+    concepto_gasto = st.text_input("Concepto del gasto:")
     total_pagado = st.number_input("Total pagado (€):", min_value=0.0, step=1.0)
-    foto_compra = st.camera_input("Hacer foto al ticket/factura:")
+    
+    # NUEVO: Selector de archivos válido para fotos o PDFs en el móvil
+    archivo_subido = st.file_uploader("Adjuntar Ticket/Factura (PDF, JPG, PNG):", type=["pdf", "jpg", "png", "jpeg"])
     
     if st.button("💾 Enviar Factura a la columna Gastos"):
         if proveedor and concepto_gasto and total_pagado > 0:
             base_imponible = round(total_pagado / 1.21, 2)
             iva_soportado = round(total_pagado - base_imponible, 2)
             
+            estado_archivo = "PDF/Imagen Adjunto" if archivo_subido is not None else "Sin Archivo"
             try:
                 hoja_gastos.append_row([
                     fecha_str, hora_str, proveedor, concepto_gasto, 
-                    base_imponible, iva_soportado, total_pagado, "Foto archivada en Drive"
+                    base_imponible, iva_soportado, total_pagado, estado_archivo
                 ])
-                st.success(f"¡Gasto de {proveedor} guardado con éxito para el gestor! 💸")
+                st.success(f"¡Gasto de {proveedor} guardado con éxito! 💸")
             except Exception as e:
                 st.error(f"Error al escribir en Excel: {e}")
         else:
-            st.warning("Por favor, rellena el proveedor, el concepto y el importe total pagado.")
+            st.warning("Por favor, rellena los campos obligatorios.")
