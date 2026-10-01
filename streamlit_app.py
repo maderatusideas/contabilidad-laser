@@ -31,11 +31,10 @@ if cliente:
         id_sheet = st.secrets["google_sheets"]["id_documento"]
         documento = cliente.open_by_key(id_sheet)
         
-        # SOLUCIÓN DE RAÍZ AL ERROR 404: 
-        # En vez de buscar por nombre de texto rígido, cargamos las pestañas por su orden físico (la 1ª y la 2ª)
+        # OBTENEMOS LAS PESTAÑAS POR SU ORDEN FÍSICO
         hojas = documento.worksheets()
-        hoja_ingresos = hojas[0]
-        hoja_gastos = hojas[1]
+        hoja_ingresos = hojas[0]  # La primera pestaña de tu Excel
+        hoja_gastos = hojas[1]     # La segunda pestaña de tu Excel
         
         st.success(f"🟢 Conectado con éxito a: {documento.title}")
     except Exception as e:
