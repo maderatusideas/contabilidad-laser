@@ -9,8 +9,8 @@ st.title("⚡ Panel de Contabilidad Láser")
 
 # 1. Conexión segura con Google usando los Secrets de Streamlit
 scopes = [
-    "https://googleapis.com",
-    "https://googleapis.com"
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
 ]
 
 @st.cache_resource
