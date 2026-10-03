@@ -2,7 +2,6 @@ import streamlit as st
 from datetime import datetime
 import io
 import gspread
-import httpx
 
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
@@ -65,7 +64,7 @@ cliente = conectar_google()
 
 
 # ============================================================
-# AUTENTICACIÓN DEL USUARIO PARA GOOGLE DRIVE
+# AUTENTICACIÓN DEL USUARIO
 # ============================================================
 
 if not st.user.is_logged_in:
@@ -90,45 +89,6 @@ st.success(
 
 st.write("LOGIN OK")
 
-token_acceso = st.user.tokens.get("access")
-
-if token_acceso:
-
-    try:
-
-        respuesta = httpx.get(
-            "https://oauth2.googleapis.com/tokeninfo",
-            params={
-                "access_token": token_acceso
-            },
-            timeout=10
-        )
-
-        datos_token = respuesta.json()
-
-        st.write("Estado token:", respuesta.status_code)
-        st.write(
-            "Datos recibidos:",
-            {
-                clave: valor
-                for clave, valor in datos_token.items()
-                if clave not in [
-                    "access_token",
-                    "id_token",
-                    "refresh_token"
-                ]
-            }
-        )
-
-    except Exception as e:
-
-        st.error(
-            f"Error comprobando token: {e}"
-        )
-
-else:
-
-    st.error("No hay token de acceso.")
 
 # ============================================================
 # CONEXIÓN GOOGLE DRIVE - CUENTA DEL USUARIO
@@ -444,10 +404,6 @@ if "REGISTRAR VENTA" in opcion:
             error_drive = None
 
 
-            # ------------------------------------------------
-            # INTENTAR SUBIR JUSTIFICANTE
-            # ------------------------------------------------
-
             if archivo_final is not None:
 
                 try:
@@ -467,10 +423,6 @@ if "REGISTRAR VENTA" in opcion:
 
                     error_drive = str(e)
 
-
-            # ------------------------------------------------
-            # GUARDAR SIEMPRE EL INGRESO EN SHEETS
-            # ------------------------------------------------
 
             try:
 
@@ -619,10 +571,6 @@ else:
             error_drive = None
 
 
-            # ------------------------------------------------
-            # INTENTAR SUBIR JUSTIFICANTE
-            # ------------------------------------------------
-
             if archivo_final is not None:
 
                 try:
@@ -642,10 +590,6 @@ else:
 
                     error_drive = str(e)
 
-
-            # ------------------------------------------------
-            # GUARDAR SIEMPRE EL GASTO EN SHEETS
-            # ------------------------------------------------
 
             try:
 
