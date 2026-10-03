@@ -39,7 +39,22 @@ def conectar_drive():
 
 cliente = conectar_google()
 drive = conectar_drive()
+def buscar_carpeta(nombre, carpeta_padre):
+    consulta = (
+        f"name = '{nombre}' "
+        f"and '{carpeta_padre}' in parents "
+        f"and mimeType = 'application/vnd.google-apps.folder' "
+        f"and trashed = false"
+    )
+    resultado = drive.files().list(
+        q=consulta,
+        spaces="drive",
+        fields="files(id, name)"
+    ).execute()
 
+    archivos = resultado.get("files", [])
+    return archivos[0]["id"] if archivos else None
+    
 if cliente:
     try:
         id_sheet = st.secrets["google_sheets"]["id_documento"]
