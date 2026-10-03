@@ -38,6 +38,7 @@ def conectar_drive():
         return None
 
 cliente = conectar_google()
+drive = conectar_drive()
 
 if cliente:
     try:
