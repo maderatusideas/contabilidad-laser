@@ -2,6 +2,8 @@ import streamlit as st
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 # Configuración estética de la app para el móvil
 st.set_page_config(page_title="Control Láser NT", page_icon="⚡", layout="centered")
