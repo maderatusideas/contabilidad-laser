@@ -106,26 +106,29 @@ if token_acceso:
 
         datos_token = respuesta.json()
 
+        st.write("Estado token:", respuesta.status_code)
         st.write(
-            "Scopes concedidos:",
-            datos_token.get(
-                "scope",
-                "NO APARECEN"
-            )
+            "Datos recibidos:",
+            {
+                clave: valor
+                for clave, valor in datos_token.items()
+                if clave not in [
+                    "access_token",
+                    "id_token",
+                    "refresh_token"
+                ]
+            }
         )
 
     except Exception as e:
 
         st.error(
-            f"Error comprobando scopes: {e}"
+            f"Error comprobando token: {e}"
         )
 
 else:
 
-    st.error(
-        "No hay token de acceso."
-    )
-
+    st.error("No hay token de acceso.")
 
 # ============================================================
 # CONEXIÓN GOOGLE DRIVE - CUENTA DEL USUARIO
