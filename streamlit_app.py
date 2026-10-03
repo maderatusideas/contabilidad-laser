@@ -88,7 +88,11 @@ else:
     proveedor = st.text_input("Proveedor (ej: xTool, Gestor):")
     concepto_gasto = st.text_input("Concepto del gasto:")
     total_pagado = st.number_input("Total pagado (€):", min_value=0.0, step=1.0)
-    archivo_subido = st.file_uploader("Adjuntar Ticket/Factura (PDF, JPG, PNG):", type=["pdf", "jpg", "png", "jpeg"])
+    archivo_subido = st.file_uploader(
+    "📎 Adjuntar justificante (PDF, foto, ticket o factura)",
+    type=["pdf", "jpg", "jpeg", "png"],
+    accept_multiple_files=False
+)
     
     if st.button("💾 Enviar Factura a la columna Gastos"):
         if proveedor and concepto_gasto and total_pagado > 0:
