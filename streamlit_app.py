@@ -56,8 +56,37 @@ def buscar_carpeta(nombre, carpeta_padre):
     return archivos[0]["id"] if archivos else None
 
 id_carpeta_principal = st.secrets["google_drive"]["id_carpeta_principal"]
-id_carpeta_2026 = buscar_carpeta("2026", id_carpeta_principal)
-id_carpeta_t4 = buscar_carpeta("T4", id_carpeta_2026)
+
+
+def obtener_carpeta_drive(nombre, carpeta_padre):
+    carpeta = buscar_carpeta(nombre, carpeta_padre)
+
+    if carpeta:
+        return carpeta
+
+    resultado = drive.files().create(
+        body={
+            "name": nombre,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [carpeta_padre]
+        },
+        fields="id"
+    ).execute()
+
+    return resultado["id"]
+
+
+def obtener_ruta_contabilidad(tipo):
+    ahora_local = datetime.now()
+
+    anio = str(ahora_local.year)
+    trimestre = f"T{((ahora_local.month - 1) // 3) + 1}"
+
+    id_anio = obtener_carpeta_drive(anio, id_carpeta_principal)
+    id_trimestre = obtener_carpeta_drive(trimestre, id_anio)
+    id_tipo = obtener_carpeta_drive(tipo, id_trimestre)
+
+    return id_tipo
 st.write("Carpeta T4 encontrada:", id_carpeta_t4)
 
 if cliente:
