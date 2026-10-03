@@ -62,7 +62,11 @@ if "REGISTRAR VENTA" in opcion:
     
     concepto = st.text_input("Concepto del pedido:")
     total_cobrado = st.number_input("Total cobrado con IVA (€):", min_value=0.0, step=1.0)
-    archivo_subido = st.file_uploader("Adjuntar Factura/Foto (PDF, JPG, PNG):", type=["pdf", "jpg", "png", "jpeg"])
+    archivo_subido = st.file_uploader(
+    "📎 Adjuntar justificante (PDF, foto, ticket o factura)",
+    type=["pdf", "jpg", "jpeg", "png"],
+    accept_multiple_files=False
+)
     
     if st.button("🚀 Guardar e Inyectar en Excel ingresos"):
         if concepto and total_cobrado > 0:
