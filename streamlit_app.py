@@ -1,51 +1,144 @@
 import streamlit as st
 from datetime import datetime
+import io
 import gspread
+
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# Configuración estética de la app para el móvil
-st.set_page_config(page_title="Control Láser NT", page_icon="⚡", layout="centered")
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+st.set_page_config(
+    page_title="Control Láser NT",
+    page_icon="⚡",
+    layout="centered"
+)
+
 st.title("⚡ Panel de Contabilidad Láser")
 
-# 1. Conexión segura con Google usando los Secrets de Streamlit
+
+# ============================================================
+# CONEXIÓN GOOGLE
+# ============================================================
+
 scopes = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
+
+@st.cache_resource
+def obtener_credenciales():
+    info_claves = dict(st.secrets["gcp_service_account"])
+
+    info_claves["private_key"] = info_claves["private_key"].replace(
+        "\\n",
+        "\n"
+    )
+
+    return Credentials.from_service_account_info(
+        info_claves,
+        scopes=scopes
+    )
+
+
 @st.cache_resource
 def conectar_google():
     try:
-        info_claves = dict(st.secrets["gcp_service_account"])
-        info_claves["private_key"] = info_claves["private_key"].replace("\\n", "\n")
-        credenciales = Credentials.from_service_account_info(info_claves, scopes=scopes)
+        credenciales = obtener_credenciales()
         return gspread.authorize(credenciales)
+
     except Exception as e:
-        st.error(f"Error crítico en la configuración de la clave: {e}")
+        st.error(
+            f"Error crítico en la configuración de la clave: {e}"
+        )
         return None
+
 
 @st.cache_resource
 def conectar_drive():
     try:
-        info_claves = dict(st.secrets["gcp_service_account"])
-        info_claves["private_key"] = info_claves["private_key"].replace("\\n", "\n")
-        credenciales = Credentials.from_service_account_info(info_claves, scopes=scopes)
-        return build("drive", "v3", credentials=credenciales)
+        credenciales = obtener_credenciales()
+
+        return build(
+            "drive",
+            "v3",
+            credentials=credenciales
+        )
+
     except Exception as e:
-        st.error(f"Error al conectar con Google Drive: {e}")
+        st.error(
+            f"Error al conectar con Google Drive: {e}"
+        )
         return None
+
 
 cliente = conectar_google()
 drive = conectar_drive()
+
+
+# ============================================================
+# CONEXIÓN CON GOOGLE SHEETS
+# ============================================================
+
+if cliente:
+
+    try:
+
+        id_sheet = st.secrets["google_sheets"]["id_documento"]
+
+        documento = cliente.open_by_key(id_sheet)
+
+        hojas = documento.worksheets()
+
+        hoja_ingresos = hojas[0]
+        hoja_gastos = hojas[1]
+
+        st.success(
+            f"🟢 Conectado con éxito a: {documento.title}"
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"🔴 Error al acceder a las pestañas del documento: {e}"
+        )
+
+        hoja_ingresos = None
+        hoja_gastos = None
+
+else:
+
+    st.error(
+        "🔴 No se ha podido validar la cuenta de servicio de Google."
+    )
+
+    hoja_ingresos = None
+    hoja_gastos = None
+
+
+# ============================================================
+# GOOGLE DRIVE
+# ============================================================
+
+id_carpeta_principal = st.secrets["google_drive"][
+    "id_carpeta_principal"
+]
+
+
 def buscar_carpeta(nombre, carpeta_padre):
+
     consulta = (
         f"name = '{nombre}' "
         f"and '{carpeta_padre}' in parents "
         f"and mimeType = 'application/vnd.google-apps.folder' "
         f"and trashed = false"
     )
+
     resultado = drive.files().list(
         q=consulta,
         spaces="drive",
@@ -53,13 +146,19 @@ def buscar_carpeta(nombre, carpeta_padre):
     ).execute()
 
     archivos = resultado.get("files", [])
-    return archivos[0]["id"] if archivos else None
 
-id_carpeta_principal = st.secrets["google_drive"]["id_carpeta_principal"]
+    if archivos:
+        return archivos[0]["id"]
+
+    return None
 
 
 def obtener_carpeta_drive(nombre, carpeta_padre):
-    carpeta = buscar_carpeta(nombre, carpeta_padre)
+
+    carpeta = buscar_carpeta(
+        nombre,
+        carpeta_padre
+    )
 
     if carpeta:
         return carpeta
@@ -77,102 +176,367 @@ def obtener_carpeta_drive(nombre, carpeta_padre):
 
 
 def obtener_ruta_contabilidad(tipo):
+
     ahora_local = datetime.now()
 
     anio = str(ahora_local.year)
-    trimestre = f"T{((ahora_local.month - 1) // 3) + 1}"
 
-    id_anio = obtener_carpeta_drive(anio, id_carpeta_principal)
-    id_trimestre = obtener_carpeta_drive(trimestre, id_anio)
-    id_tipo = obtener_carpeta_drive(tipo, id_trimestre)
+    trimestre = (
+        f"T{((ahora_local.month - 1) // 3) + 1}"
+    )
+
+    id_anio = obtener_carpeta_drive(
+        anio,
+        id_carpeta_principal
+    )
+
+    id_trimestre = obtener_carpeta_drive(
+        trimestre,
+        id_anio
+    )
+
+    id_tipo = obtener_carpeta_drive(
+        tipo,
+        id_trimestre
+    )
 
     return id_tipo
 
-if cliente:
-    try:
-        id_sheet = st.secrets["google_sheets"]["id_documento"]
-        documento = cliente.open_by_key(id_sheet)
-        
-        # OBTENEMOS LAS PESTAÑAS POR SU ORDEN FÍSICO
-        hojas = documento.worksheets()
-        hoja_ingresos = hojas[0]  # La primera pestaña de tu Excel
-        hoja_gastos = hojas[1]     # La segunda pestaña de tu Excel
-        
-        st.success(f"🟢 Conectado con éxito a: {documento.title}")
-    except Exception as e:
-        st.error(f"🔴 Error al acceder a las pestañas del documento: {e}")
-else:
-    st.error("🔴 No se ha podido validar la cuenta de servicio de Google.")
 
-# 2. Interfaz de usuario para vuestros teléfonos móviles
-opcion = st.radio("Operación:", ["🛒 REGISTRAR COMPRA (Gasto)", "💰 REGISTRAR VENTA (Ingreso)"], horizontal=True)
+def subir_archivo_drive(archivo, carpeta_id):
+
+    contenido = archivo.getvalue()
+
+    media = MediaIoBaseUpload(
+        io.BytesIO(contenido),
+        mimetype=archivo.type,
+        resumable=True
+    )
+
+    archivo_drive = drive.files().create(
+        body={
+            "name": archivo.name,
+            "parents": [carpeta_id]
+        },
+        media_body=media,
+        fields="id, webViewLink"
+    ).execute()
+
+    return archivo_drive["webViewLink"]
+
+
+# ============================================================
+# FECHA Y HORA
+# ============================================================
 
 ahora = datetime.now()
+
 fecha_str = ahora.strftime("%Y-%m-%d")
 hora_str = ahora.strftime("%H:%M:%S")
 
-if "REGISTRAR VENTA" in opcion:
-    st.markdown("### 📈 Nuevo Ingreso (Venta)")
-    
-    try:
-        filas_existentes = len(hoja_ingresos.get_all_values())
-        codigo_factura = f"F-{ahora.strftime('%Y')}-{(filas_existentes):03d}"
-    except:
-        codigo_factura = "F-ERROR"
-        
-    st.info(f"Número de Factura asignado: **{codigo_factura}**")
-    
-    concepto = st.text_input("Concepto del pedido:")
-    total_cobrado = st.number_input("Total cobrado con IVA (€):", min_value=0.0, step=1.0)
-    archivo_subido = st.file_uploader(
-    "📎 Adjuntar justificante (PDF, foto, ticket o factura)",
-    type=["pdf", "jpg", "jpeg", "png"],
-    accept_multiple_files=False
+
+# ============================================================
+# SELECCIÓN DE OPERACIÓN
+# ============================================================
+
+opcion = st.radio(
+    "Operación:",
+    [
+        "🛒 REGISTRAR COMPRA (Gasto)",
+        "💰 REGISTRAR VENTA (Ingreso)"
+    ],
+    horizontal=True
 )
-    
-    if st.button("🚀 Guardar e Inyectar en Excel ingresos"):
-        if concepto and total_cobrado > 0:
-            base_imponible = round(total_cobrado / 1.21, 2)
-            iva_21 = round(total_cobrado - base_imponible, 2)
-            
-            estado_archivo = "Archivo Adjunto" if archivo_subido is not None else "Sin Archivo"
-            try:
-                hoja_ingresos.append_row([
-                    fecha_str, hora_str, codigo_factura, concepto, 
-                    base_imponible, iva_21, total_cobrado, estado_archivo
-                ])
-                st.success(f"¡Venta {codigo_factura} anotada en Ingresos! 🎉")
-            except Exception as e:
-                st.error(f"Error al escribir en Excel: {e}")
+
+
+# ============================================================
+# INGRESOS
+# ============================================================
+
+if "REGISTRAR VENTA" in opcion:
+
+    st.markdown("### 📈 Nuevo Ingreso (Venta)")
+
+    if hoja_ingresos is not None:
+
+        try:
+
+            filas_existentes = len(
+                hoja_ingresos.get_all_values()
+            )
+
+            codigo_factura = (
+                f"F-{ahora.strftime('%Y')}-"
+                f"{filas_existentes:03d}"
+            )
+
+        except Exception:
+
+            codigo_factura = "F-ERROR"
+
+    else:
+
+        codigo_factura = "F-ERROR"
+
+
+    st.info(
+        f"Número de Factura asignado: "
+        f"**{codigo_factura}**"
+    )
+
+
+    concepto = st.text_input(
+        "Concepto del pedido:"
+    )
+
+
+    total_cobrado = st.number_input(
+        "Total cobrado con IVA (€):",
+        min_value=0.0,
+        step=1.0
+    )
+
+
+    st.markdown("#### 📎 Justificante")
+
+
+    foto_ingreso = st.camera_input(
+        "📷 Hacer foto del justificante"
+    )
+
+
+    archivo_ingreso = st.file_uploader(
+        "📎 Adjuntar justificante "
+        "(PDF, foto, ticket o factura)",
+        type=[
+            "pdf",
+            "jpg",
+            "jpeg",
+            "png"
+        ],
+        accept_multiple_files=False,
+        key="archivo_ingreso"
+    )
+
+
+    archivo_final = (
+        foto_ingreso
+        if foto_ingreso is not None
+        else archivo_ingreso
+    )
+
+
+    if st.button(
+        "💾 Guardar ingreso",
+        type="primary"
+    ):
+
+        if hoja_ingresos is None:
+
+            st.error(
+                "No hay conexión con la hoja de ingresos."
+            )
+
+        elif not concepto.strip():
+
+            st.warning(
+                "Introduce el concepto del pedido."
+            )
+
+        elif total_cobrado <= 0:
+
+            st.warning(
+                "Introduce un importe mayor que 0 €."
+            )
+
         else:
-            st.warning("Por favor, rellena el concepto y el importe cobrado.")
+
+            base = total_cobrado / 1.21
+
+            iva = total_cobrado - base
+
+            link_drive = ""
+
+            try:
+
+                if archivo_final is not None:
+
+                    carpeta_ingresos = (
+                        obtener_ruta_contabilidad(
+                            "INGRESOS"
+                        )
+                    )
+
+                    link_drive = subir_archivo_drive(
+                        archivo_final,
+                        carpeta_ingresos
+                    )
+
+                hoja_ingresos.append_row(
+                    [
+                        fecha_str,
+                        hora_str,
+                        codigo_factura,
+                        concepto,
+                        round(base, 2),
+                        round(iva, 2),
+                        round(total_cobrado, 2),
+                        link_drive
+                    ],
+                    value_input_option="USER_ENTERED"
+                )
+
+                st.success(
+                    "✅ Ingreso registrado correctamente."
+                )
+
+                if link_drive:
+                    st.markdown(
+                        f"📎 [Abrir justificante en Google Drive]"
+                        f"({link_drive})"
+                    )
+
+            except Exception as e:
+
+                st.error(
+                    f"❌ Error al guardar el ingreso: {e}"
+                )
+
+
+# ============================================================
+# GASTOS
+# ============================================================
 
 else:
-    st.markdown("### 📉 Nuevo Gasto (Compra / Inversión)")
-    st.info("💡 ¡Sube aquí el PDF de la factura de vuestra xTool P3!")
-    
-    proveedor = st.text_input("Proveedor (ej: xTool, Gestor):")
-    concepto_gasto = st.text_input("Concepto del gasto:")
-    total_pagado = st.number_input("Total pagado (€):", min_value=0.0, step=1.0)
-    archivo_subido = st.file_uploader(
-    "📎 Adjuntar justificante (PDF, foto, ticket o factura)",
-    type=["pdf", "jpg", "jpeg", "png"],
-    accept_multiple_files=False
-)
-    
-    if st.button("💾 Enviar Factura a la columna Gastos"):
-        if proveedor and concepto_gasto and total_pagado > 0:
-            base_imponible = round(total_pagado / 1.21, 2)
-            iva_soportado = round(total_pagado - base_imponible, 2)
-            
-            estado_archivo = "PDF/Imagen Adjunto" if archivo_subido is not None else "Sin Archivo"
-            try:
-                hoja_gastos.append_row([
-                    fecha_str, hora_str, proveedor, concepto_gasto, 
-                    base_imponible, iva_soportado, total_pagado, estado_archivo
-                ])
-                st.success(f"¡Gasto de {proveedor} guardado con éxito! 💸")
-            except Exception as e:
-                st.error(f"Error al escribir en Excel: {e}")
+
+    st.markdown(
+        "### 📉 Nuevo Gasto (Compra / Inversión)"
+    )
+
+    proveedor = st.text_input(
+        "Proveedor (ej: xTool, Gestor):"
+    )
+
+
+    concepto_gasto = st.text_input(
+        "Concepto del gasto:"
+    )
+
+
+    total_pagado = st.number_input(
+        "Total pagado (€):",
+        min_value=0.0,
+        step=1.0
+    )
+
+
+    st.markdown("#### 📎 Justificante")
+
+
+    foto_gasto = st.camera_input(
+        "📷 Hacer foto del justificante"
+    )
+
+
+    archivo_gasto = st.file_uploader(
+        "📎 Adjuntar justificante "
+        "(PDF, foto, ticket o factura)",
+        type=[
+            "pdf",
+            "jpg",
+            "jpeg",
+            "png"
+        ],
+        accept_multiple_files=False,
+        key="archivo_gasto"
+    )
+
+
+    archivo_final = (
+        foto_gasto
+        if foto_gasto is not None
+        else archivo_gasto
+    )
+
+
+    if st.button(
+        "💾 Guardar gasto",
+        type="primary"
+    ):
+
+        if hoja_gastos is None:
+
+            st.error(
+                "No hay conexión con la hoja de gastos."
+            )
+
+        elif not proveedor.strip():
+
+            st.warning(
+                "Introduce el proveedor."
+            )
+
+        elif not concepto_gasto.strip():
+
+            st.warning(
+                "Introduce el concepto del gasto."
+            )
+
+        elif total_pagado <= 0:
+
+            st.warning(
+                "Introduce un importe mayor que 0 €."
+            )
+
         else:
-            st.warning("Por favor, rellena los campos obligatorios.")
+
+            base = total_pagado / 1.21
+
+            iva = total_pagado - base
+
+            link_drive = ""
+
+            try:
+
+                if archivo_final is not None:
+
+                    carpeta_gastos = (
+                        obtener_ruta_contabilidad(
+                            "GASTOS"
+                        )
+                    )
+
+                    link_drive = subir_archivo_drive(
+                        archivo_final,
+                        carpeta_gastos
+                    )
+
+                hoja_gastos.append_row(
+                    [
+                        fecha_str,
+                        hora_str,
+                        proveedor,
+                        concepto_gasto,
+                        round(base, 2),
+                        round(iva, 2),
+                        round(total_pagado, 2),
+                        link_drive
+                    ],
+                    value_input_option="USER_ENTERED"
+                )
+
+                st.success(
+                    "✅ Gasto registrado correctamente."
+                )
+
+                if link_drive:
+                    st.markdown(
+                        f"📎 [Abrir justificante en Google Drive]"
+                        f"({link_drive})"
+                    )
+
+            except Exception as e:
+
+                st.error(
+                    f"❌ Error al guardar el gasto: {e}"
+                )
