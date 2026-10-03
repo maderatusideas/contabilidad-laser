@@ -86,6 +86,8 @@ if not st.user.is_logged_in:
 st.success(
     f"👤 Google conectado: {st.user.email}"
 )
+st.write("LOGIN OK")
+st.write(st.user.to_dict())
 
 
 # ============================================================
