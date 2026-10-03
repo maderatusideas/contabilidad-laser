@@ -26,6 +26,17 @@ def conectar_google():
         st.error(f"Error crítico en la configuración de la clave: {e}")
         return None
 
+@st.cache_resource
+def conectar_drive():
+    try:
+        info_claves = dict(st.secrets["gcp_service_account"])
+        info_claves["private_key"] = info_claves["private_key"].replace("\\n", "\n")
+        credenciales = Credentials.from_service_account_info(info_claves, scopes=scopes)
+        return build("drive", "v3", credentials=credenciales)
+    except Exception as e:
+        st.error(f"Error al conectar con Google Drive: {e}")
+        return None
+
 cliente = conectar_google()
 
 if cliente:
