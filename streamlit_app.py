@@ -4,6 +4,7 @@ import io
 import gspread
 
 from google.oauth2.service_account import Credentials
+from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
@@ -22,10 +23,10 @@ st.title("⚡ Panel de Contabilidad Láser")
 
 
 # ============================================================
-# CONEXIÓN GOOGLE
+# CONEXIÓN GOOGLE SHEETS - CUENTA DE SERVICIO
 # ============================================================
 
-scopes = [
+scopes_sheets = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
@@ -42,7 +43,7 @@ def obtener_credenciales():
 
     return Credentials.from_service_account_info(
         info_claves,
-        scopes=scopes
+        scopes=scopes_sheets
     )
 
 
@@ -59,26 +60,64 @@ def conectar_google():
         return None
 
 
-@st.cache_resource
-def conectar_drive():
+cliente = conectar_google()
+
+
+# ============================================================
+# AUTENTICACIÓN DEL USUARIO PARA GOOGLE DRIVE
+# ============================================================
+
+if not st.user.is_logged_in:
+
+    st.info(
+        "🔐 Para utilizar Google Drive necesitas iniciar sesión "
+        "con tu cuenta de Google."
+    )
+
+    if st.button(
+        "🔑 Iniciar sesión con Google",
+        type="primary"
+    ):
+        st.login("google")
+
+    st.stop()
+
+
+st.success(
+    f"👤 Google conectado: {st.user.email}"
+)
+
+
+# ============================================================
+# CONEXIÓN GOOGLE DRIVE - CUENTA DEL USUARIO
+# ============================================================
+
+def conectar_drive_usuario():
+
     try:
-        credenciales = obtener_credenciales()
+
+        token_acceso = st.user.tokens["access"]
+
+        credenciales_oauth = OAuthCredentials(
+            token=token_acceso
+        )
 
         return build(
             "drive",
             "v3",
-            credentials=credenciales
+            credentials=credenciales_oauth
         )
 
     except Exception as e:
+
         st.error(
             f"Error al conectar con Google Drive: {e}"
         )
+
         return None
 
 
-cliente = conectar_google()
-drive = conectar_drive()
+drive = conectar_drive_usuario()
 
 
 # ============================================================
@@ -222,7 +261,10 @@ def subir_archivo_drive(archivo, carpeta_id):
         fields="id, webViewLink"
     ).execute()
 
-    return archivo_drive["webViewLink"]
+    return archivo_drive.get(
+        "webViewLink",
+        f"https://drive.google.com/file/d/{archivo_drive['id']}/view"
+    )
 
 
 # ============================================================
@@ -357,9 +399,16 @@ if "REGISTRAR VENTA" in opcion:
 
             link_drive = ""
 
-            try:
+            error_drive = None
 
-                if archivo_final is not None:
+
+            # ------------------------------------------------
+            # INTENTAR SUBIR JUSTIFICANTE
+            # ------------------------------------------------
+
+            if archivo_final is not None:
+
+                try:
 
                     carpeta_ingresos = (
                         obtener_ruta_contabilidad(
@@ -371,6 +420,17 @@ if "REGISTRAR VENTA" in opcion:
                         archivo_final,
                         carpeta_ingresos
                     )
+
+                except Exception as e:
+
+                    error_drive = str(e)
+
+
+            # ------------------------------------------------
+            # GUARDAR SIEMPRE EL INGRESO EN SHEETS
+            # ------------------------------------------------
+
+            try:
 
                 hoja_ingresos.append_row(
                     [
@@ -386,15 +446,32 @@ if "REGISTRAR VENTA" in opcion:
                     value_input_option="USER_ENTERED"
                 )
 
-                st.success(
-                    "✅ Ingreso registrado correctamente."
-                )
+
+                if error_drive:
+
+                    st.warning(
+                        "⚠️ Ingreso guardado en Sheets, "
+                        "pero no se pudo subir el justificante a Drive."
+                    )
+
+                    st.error(
+                        f"Detalle del error de Drive: {error_drive}"
+                    )
+
+                else:
+
+                    st.success(
+                        "✅ Ingreso registrado correctamente."
+                    )
+
 
                 if link_drive:
+
                     st.markdown(
                         f"📎 [Abrir justificante en Google Drive]"
                         f"({link_drive})"
                     )
+
 
             except Exception as e:
 
@@ -412,6 +489,7 @@ else:
     st.markdown(
         "### 📉 Nuevo Gasto (Compra / Inversión)"
     )
+
 
     proveedor = st.text_input(
         "Proveedor (ej: xTool, Gestor):"
@@ -496,9 +574,16 @@ else:
 
             link_drive = ""
 
-            try:
+            error_drive = None
 
-                if archivo_final is not None:
+
+            # ------------------------------------------------
+            # INTENTAR SUBIR JUSTIFICANTE
+            # ------------------------------------------------
+
+            if archivo_final is not None:
+
+                try:
 
                     carpeta_gastos = (
                         obtener_ruta_contabilidad(
@@ -510,6 +595,17 @@ else:
                         archivo_final,
                         carpeta_gastos
                     )
+
+                except Exception as e:
+
+                    error_drive = str(e)
+
+
+            # ------------------------------------------------
+            # GUARDAR SIEMPRE EL GASTO EN SHEETS
+            # ------------------------------------------------
+
+            try:
 
                 hoja_gastos.append_row(
                     [
@@ -525,15 +621,32 @@ else:
                     value_input_option="USER_ENTERED"
                 )
 
-                st.success(
-                    "✅ Gasto registrado correctamente."
-                )
+
+                if error_drive:
+
+                    st.warning(
+                        "⚠️ Gasto guardado en Sheets, "
+                        "pero no se pudo subir el justificante a Drive."
+                    )
+
+                    st.error(
+                        f"Detalle del error de Drive: {error_drive}"
+                    )
+
+                else:
+
+                    st.success(
+                        "✅ Gasto registrado correctamente."
+                    )
+
 
                 if link_drive:
+
                     st.markdown(
                         f"📎 [Abrir justificante en Google Drive]"
                         f"({link_drive})"
                     )
+
 
             except Exception as e:
 
