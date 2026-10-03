@@ -4,8 +4,11 @@ import io
 import gspread
 
 from google.oauth2.service_account import Credentials
+from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+
+from streamlit_oauth import OAuth2Component
 
 
 # ============================================================
@@ -22,10 +25,10 @@ st.title("⚡ Panel de Contabilidad Láser")
 
 
 # ============================================================
-# CREDENCIALES DE LA CUENTA DE SERVICIO
+# GOOGLE SHEETS - CUENTA DE SERVICIO
 # ============================================================
 
-scopes_google = [
+scopes_sheets = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
@@ -33,35 +36,40 @@ scopes_google = [
 
 @st.cache_resource
 def obtener_credenciales():
-    info_claves = dict(st.secrets["gcp_service_account"])
 
-    # Streamlit Secrets puede guardar los saltos de línea
-    # de la clave privada como \n
-    info_claves["private_key"] = info_claves["private_key"].replace(
-        "\\n",
-        "\n"
+    info_claves = dict(
+        st.secrets["gcp_service_account"]
+    )
+
+    info_claves["private_key"] = (
+        info_claves["private_key"]
+        .replace("\\n", "\n")
     )
 
     return Credentials.from_service_account_info(
         info_claves,
-        scopes=scopes_google
+        scopes=scopes_sheets
     )
 
 
-# ============================================================
-# GOOGLE SHEETS
-# ============================================================
-
 @st.cache_resource
 def conectar_google():
+
     try:
+
         credenciales = obtener_credenciales()
-        return gspread.authorize(credenciales)
+
+        return gspread.authorize(
+            credenciales
+        )
 
     except Exception as e:
+
         st.error(
-            f"Error crítico en la configuración de la cuenta de servicio: {e}"
+            "Error crítico en la configuración "
+            f"de la cuenta de servicio: {e}"
         )
+
         return None
 
 
@@ -75,14 +83,15 @@ cliente = conectar_google()
 if not st.user.is_logged_in:
 
     st.info(
-        "🔐 Para utilizar el Panel de Contabilidad Láser "
-        "necesitas iniciar sesión con tu cuenta de Google."
+        "🔐 Para utilizar el Panel de Contabilidad "
+        "Láser necesitas iniciar sesión con Google."
     )
 
     if st.button(
         "🔑 Iniciar sesión con Google",
         type="primary"
     ):
+
         st.login("google")
 
     st.stop()
@@ -96,45 +105,20 @@ st.write("LOGIN OK")
 
 
 # ============================================================
-# GOOGLE DRIVE
-#
-# IMPORTANTE:
-# Drive NO utiliza el token de st.login().
-# Utiliza la misma cuenta de servicio que Sheets.
-# ============================================================
-
-@st.cache_resource
-def conectar_drive():
-    try:
-        credenciales = obtener_credenciales()
-
-        return build(
-            "drive",
-            "v3",
-            credentials=credenciales
-        )
-
-    except Exception as e:
-        st.error(
-            f"Error al conectar con Google Drive: {e}"
-        )
-        return None
-
-
-drive = conectar_drive()
-
-
-# ============================================================
-# GOOGLE SHEETS - ABRIR DOCUMENTO
+# GOOGLE SHEETS
 # ============================================================
 
 if cliente:
 
     try:
 
-        id_sheet = st.secrets["google_sheets"]["id_documento"]
+        id_sheet = st.secrets[
+            "google_sheets"
+        ]["id_documento"]
 
-        documento = cliente.open_by_key(id_sheet)
+        documento = cliente.open_by_key(
+            id_sheet
+        )
 
         hojas = documento.worksheets()
 
@@ -142,13 +126,15 @@ if cliente:
         hoja_gastos = hojas[1]
 
         st.success(
-            f"🟢 Conectado con éxito a: {documento.title}"
+            f"🟢 Conectado con éxito a: "
+            f"{documento.title}"
         )
 
     except Exception as e:
 
         st.error(
-            f"🔴 Error al acceder a las pestañas del documento: {e}"
+            "🔴 Error al acceder a las "
+            f"pestañas del documento: {e}"
         )
 
         hoja_ingresos = None
@@ -157,7 +143,8 @@ if cliente:
 else:
 
     st.error(
-        "🔴 No se ha podido validar la cuenta de servicio de Google."
+        "🔴 No se ha podido validar "
+        "la cuenta de servicio de Google."
     )
 
     hoja_ingresos = None
@@ -165,7 +152,215 @@ else:
 
 
 # ============================================================
-# CARPETA PRINCIPAL DE GOOGLE DRIVE
+# CONFIGURACIÓN OAUTH DE GOOGLE DRIVE
+# ============================================================
+
+DRIVE_SCOPE = (
+    "https://www.googleapis.com/auth/drive"
+)
+
+DRIVE_AUTHORIZE_URL = (
+    "https://accounts.google.com/o/oauth2/v2/auth"
+)
+
+DRIVE_TOKEN_URL = (
+    "https://oauth2.googleapis.com/token"
+)
+
+DRIVE_REVOKE_URL = (
+    "https://oauth2.googleapis.com/revoke"
+)
+
+DRIVE_REDIRECT_URI = (
+    "https://maderatusideas-contabilidad-laser-"
+    "streamlit-app-hikvam.streamlit.app/"
+    "component/streamlit_oauth.authorize_button"
+)
+
+
+# ============================================================
+# OAUTH COMPONENT
+# ============================================================
+
+try:
+
+    drive_client_id = st.secrets[
+        "google_drive_oauth"
+    ]["client_id"]
+
+    drive_client_secret = st.secrets[
+        "google_drive_oauth"
+    ]["client_secret"]
+
+except Exception as e:
+
+    st.error(
+        "🔴 Falta la configuración "
+        f"google_drive_oauth en Secrets: {e}"
+    )
+
+    st.stop()
+
+
+oauth2 = OAuth2Component(
+
+    client_id=drive_client_id,
+
+    client_secret=drive_client_secret,
+
+    authorize_endpoint=DRIVE_AUTHORIZE_URL,
+
+    token_endpoint=DRIVE_TOKEN_URL,
+
+    refresh_token_endpoint=DRIVE_TOKEN_URL,
+
+    revoke_token_endpoint=DRIVE_REVOKE_URL
+)
+
+
+# ============================================================
+# AUTORIZACIÓN DRIVE
+# ============================================================
+
+if "drive_token" not in st.session_state:
+
+    st.info(
+        "📁 Google Drive necesita autorización "
+        "para guardar los justificantes."
+    )
+
+    resultado_oauth = oauth2.authorize_button(
+
+        "🔐 Autorizar Google Drive",
+
+        DRIVE_REDIRECT_URI,
+
+        DRIVE_SCOPE,
+
+        key="autorizar_drive",
+
+        extras_params={
+
+            "access_type": "offline",
+
+            "prompt": "consent",
+
+            "include_granted_scopes": "true",
+
+            "login_hint": st.user.email
+        }
+    )
+
+    if (
+        resultado_oauth
+        and "token" in resultado_oauth
+    ):
+
+        st.session_state.drive_token = (
+            resultado_oauth["token"]
+        )
+
+        st.rerun()
+
+    drive = None
+
+else:
+
+    # --------------------------------------------------------
+    # TOKEN YA DISPONIBLE
+    # --------------------------------------------------------
+
+    try:
+
+        token_drive = (
+            st.session_state["drive_token"]
+        )
+
+        # Intentamos renovar automáticamente
+        # si el access token ha caducado.
+
+        token_drive = oauth2.refresh_token(
+            token_drive
+        )
+
+        st.session_state["drive_token"] = (
+            token_drive
+        )
+
+        access_token = token_drive.get(
+            "access_token"
+        )
+
+        refresh_token = token_drive.get(
+            "refresh_token"
+        )
+
+        if not access_token:
+
+            raise Exception(
+                "No se recibió un access token "
+                "válido de Google Drive."
+            )
+
+        if not refresh_token:
+
+            # Puede ocurrir si Google no devuelve
+            # refresh token en una autorización
+            # posterior. El primer consentimiento
+            # debería proporcionarlo.
+
+            raise Exception(
+                "Google no ha proporcionado "
+                "refresh_token. "
+                "Será necesario volver a autorizar Drive."
+            )
+
+        credenciales_drive = OAuthCredentials(
+
+            token=access_token,
+
+            refresh_token=refresh_token,
+
+            token_uri=DRIVE_TOKEN_URL,
+
+            client_id=drive_client_id,
+
+            client_secret=drive_client_secret,
+
+            scopes=[DRIVE_SCOPE]
+        )
+
+        drive = build(
+            "drive",
+            "v3",
+            credentials=credenciales_drive
+        )
+
+        st.success(
+            "🟢 Google Drive autorizado"
+        )
+
+    except Exception as e:
+
+        st.session_state.pop(
+            "drive_token",
+            None
+        )
+
+        drive = None
+
+        st.warning(
+            "⚠️ La autorización de Google Drive "
+            "debe realizarse de nuevo."
+        )
+
+        st.error(
+            f"Detalle de autorización Drive: {e}"
+        )
+
+
+# ============================================================
+# CARPETA PRINCIPAL DE DRIVE
 # ============================================================
 
 try:
@@ -177,58 +372,71 @@ try:
 except Exception as e:
 
     st.error(
-        f"🔴 No se ha podido obtener la carpeta principal de Drive: {e}"
+        "🔴 No se ha podido obtener la "
+        f"carpeta principal de Drive: {e}"
     )
 
     id_carpeta_principal = None
 
 
 # ============================================================
-# BUSCAR CARPETA EN DRIVE
+# BUSCAR CARPETA
 # ============================================================
 
-def buscar_carpeta(nombre, carpeta_padre):
+def buscar_carpeta(
+    nombre,
+    carpeta_padre
+):
 
     if drive is None:
-        raise Exception(
-            "La conexión con Google Drive no está disponible."
-        )
 
-    if not carpeta_padre:
         raise Exception(
-            "No se ha definido la carpeta principal de Google Drive."
+            "Google Drive no está autorizado."
         )
 
     consulta = (
         f"name = '{nombre}' "
         f"and '{carpeta_padre}' in parents "
-        f"and mimeType = 'application/vnd.google-apps.folder' "
+        f"and mimeType = "
+        f"'application/vnd.google-apps.folder' "
         f"and trashed = false"
     )
 
     resultado = drive.files().list(
+
         q=consulta,
+
         spaces="drive",
+
         fields="files(id, name)"
+
     ).execute()
 
-    archivos = resultado.get("files", [])
+    archivos = resultado.get(
+        "files",
+        []
+    )
 
     if archivos:
+
         return archivos[0]["id"]
 
     return None
 
 
 # ============================================================
-# OBTENER O CREAR CARPETA
+# OBTENER / CREAR CARPETA
 # ============================================================
 
-def obtener_carpeta_drive(nombre, carpeta_padre):
+def obtener_carpeta_drive(
+    nombre,
+    carpeta_padre
+):
 
     if drive is None:
+
         raise Exception(
-            "La conexión con Google Drive no está disponible."
+            "Google Drive no está autorizado."
         )
 
     carpeta = buscar_carpeta(
@@ -237,14 +445,21 @@ def obtener_carpeta_drive(nombre, carpeta_padre):
     )
 
     if carpeta:
+
         return carpeta
 
     resultado = drive.files().create(
 
         body={
+
             "name": nombre,
-            "mimeType": "application/vnd.google-apps.folder",
-            "parents": [carpeta_padre]
+
+            "mimeType":
+                "application/vnd.google-apps.folder",
+
+            "parents": [
+                carpeta_padre
+            ]
         },
 
         fields="id"
@@ -255,47 +470,54 @@ def obtener_carpeta_drive(nombre, carpeta_padre):
 
 
 # ============================================================
-# CREAR RUTA:
-#
-# CARPETA PRINCIPAL
-#       └── 2026
-#             └── T4
-#                   ├── GASTOS
-#                   └── INGRESOS
+# RUTA DE CONTABILIDAD
 # ============================================================
 
-def obtener_ruta_contabilidad(tipo):
+def obtener_ruta_contabilidad(
+    tipo
+):
 
     if drive is None:
+
         raise Exception(
-            "Google Drive no está conectado."
+            "Google Drive no está autorizado."
         )
 
     if not id_carpeta_principal:
+
         raise Exception(
-            "No existe una carpeta principal de Google Drive."
+            "No existe una carpeta principal "
+            "de Google Drive."
         )
 
     ahora_local = datetime.now()
 
-    anio = str(ahora_local.year)
+    anio = str(
+        ahora_local.year
+    )
 
     trimestre = (
         f"T{((ahora_local.month - 1) // 3) + 1}"
     )
 
     id_anio = obtener_carpeta_drive(
+
         anio,
+
         id_carpeta_principal
     )
 
     id_trimestre = obtener_carpeta_drive(
+
         trimestre,
+
         id_anio
     )
 
     id_tipo = obtener_carpeta_drive(
+
         tipo,
+
         id_trimestre
     )
 
@@ -303,41 +525,58 @@ def obtener_ruta_contabilidad(tipo):
 
 
 # ============================================================
-# SUBIR ARCHIVO A GOOGLE DRIVE
+# SUBIR ARCHIVO
 # ============================================================
 
-def subir_archivo_drive(archivo, carpeta_id):
+def subir_archivo_drive(
+    archivo,
+    carpeta_id
+):
 
     if drive is None:
+
         raise Exception(
-            "Google Drive no está conectado."
+            "Google Drive no está autorizado."
         )
 
     contenido = archivo.getvalue()
 
-    mimetype = getattr(
-        archivo,
-        "type",
-        None
-    ) or "application/octet-stream"
+    mimetype = (
+        getattr(
+            archivo,
+            "type",
+            None
+        )
+        or "application/octet-stream"
+    )
 
-    nombre_archivo = getattr(
-        archivo,
-        "name",
-        None
-    ) or "justificante"
+    nombre_archivo = (
+        getattr(
+            archivo,
+            "name",
+            None
+        )
+        or "justificante"
+    )
 
     media = MediaIoBaseUpload(
+
         io.BytesIO(contenido),
+
         mimetype=mimetype,
+
         resumable=True
     )
 
     archivo_drive = drive.files().create(
 
         body={
+
             "name": nombre_archivo,
-            "parents": [carpeta_id]
+
+            "parents": [
+                carpeta_id
+            ]
         },
 
         media_body=media,
@@ -351,6 +590,7 @@ def subir_archivo_drive(archivo, carpeta_id):
     )
 
     if enlace:
+
         return enlace
 
     return (
@@ -376,7 +616,7 @@ hora_str = ahora.strftime(
 
 
 # ============================================================
-# SELECTOR PRINCIPAL
+# OPERACIÓN
 # ============================================================
 
 opcion = st.radio(
@@ -402,10 +642,6 @@ if "REGISTRAR VENTA" in opcion:
         "### 📈 Nuevo Ingreso (Venta)"
     )
 
-    # --------------------------------------------------------
-    # NÚMERO DE FACTURA
-    # --------------------------------------------------------
-
     if hoja_ingresos is not None:
 
         try:
@@ -427,15 +663,10 @@ if "REGISTRAR VENTA" in opcion:
 
         codigo_factura = "F-ERROR"
 
-
     st.info(
-        f"Número de Factura asignado: **{codigo_factura}**"
+        f"Número de Factura asignado: "
+        f"**{codigo_factura}**"
     )
-
-
-    # --------------------------------------------------------
-    # DATOS
-    # --------------------------------------------------------
 
     concepto = st.text_input(
         "Concepto del pedido:"
@@ -450,20 +681,13 @@ if "REGISTRAR VENTA" in opcion:
         step=1.0
     )
 
-
-    # --------------------------------------------------------
-    # JUSTIFICANTE
-    # --------------------------------------------------------
-
     st.markdown(
         "#### 📎 Justificante"
     )
 
-
     foto_ingreso = st.camera_input(
         "📷 Hacer foto del justificante"
     )
-
 
     archivo_ingreso = st.file_uploader(
 
@@ -482,20 +706,14 @@ if "REGISTRAR VENTA" in opcion:
         key="archivo_ingreso"
     )
 
-
-    # Si existe foto, se utiliza la foto.
-    # Si no, se utiliza el archivo seleccionado.
-
     archivo_final = (
+
         foto_ingreso
+
         if foto_ingreso is not None
+
         else archivo_ingreso
     )
-
-
-    # --------------------------------------------------------
-    # GUARDAR INGRESO
-    # --------------------------------------------------------
 
     if st.button(
         "💾 Guardar ingreso",
@@ -505,40 +723,44 @@ if "REGISTRAR VENTA" in opcion:
         if hoja_ingresos is None:
 
             st.error(
-                "No hay conexión con la hoja de ingresos."
+                "No hay conexión con "
+                "la hoja de ingresos."
             )
 
         elif not concepto.strip():
 
             st.warning(
-                "Introduce el concepto del pedido."
+                "Introduce el concepto "
+                "del pedido."
             )
 
         elif total_cobrado <= 0:
 
             st.warning(
-                "Introduce un importe mayor que 0 €."
+                "Introduce un importe "
+                "mayor que 0 €."
+            )
+
+        elif drive is None:
+
+            st.error(
+                "🔐 Primero debes autorizar "
+                "Google Drive."
             )
 
         else:
 
-            # -----------------------------------------------
-            # CALCULAR IVA
-            # -----------------------------------------------
+            base = (
+                total_cobrado / 1.21
+            )
 
-            base = total_cobrado / 1.21
-
-            iva = total_cobrado - base
-
+            iva = (
+                total_cobrado - base
+            )
 
             link_drive = ""
 
             error_drive = None
-
-
-            # -----------------------------------------------
-            # SUBIR JUSTIFICANTE
-            # -----------------------------------------------
 
             if archivo_final is not None:
 
@@ -561,11 +783,6 @@ if "REGISTRAR VENTA" in opcion:
 
                     error_drive = str(e)
 
-
-            # -----------------------------------------------
-            # GUARDAR EN SHEETS
-            # -----------------------------------------------
-
             try:
 
                 hoja_ingresos.append_row(
@@ -584,50 +801,51 @@ if "REGISTRAR VENTA" in opcion:
 
                         round(iva, 2),
 
-                        round(total_cobrado, 2),
+                        round(
+                            total_cobrado,
+                            2
+                        ),
 
                         link_drive
                     ],
 
-                    value_input_option="USER_ENTERED"
+                    value_input_option=
+                        "USER_ENTERED"
                 )
-
-
-                # -------------------------------------------
-                # MENSAJE FINAL
-                # -------------------------------------------
 
                 if error_drive:
 
                     st.warning(
                         "⚠️ Ingreso guardado en Sheets, "
-                        "pero no se pudo subir el justificante a Drive."
+                        "pero no se pudo subir "
+                        "el justificante a Drive."
                     )
 
                     st.error(
-                        f"Detalle del error de Drive: "
+                        "Detalle del error de Drive: "
                         f"{error_drive}"
                     )
 
                 else:
 
                     st.success(
-                        "✅ Ingreso registrado correctamente."
+                        "✅ Ingreso registrado "
+                        "correctamente."
                     )
-
 
                 if link_drive:
 
                     st.markdown(
-                        f"📎 [Abrir justificante en Google Drive]"
+                        "📎 [Abrir justificante "
+                        "en Google Drive]"
                         f"({link_drive})"
                     )
-
 
             except Exception as e:
 
                 st.error(
-                    f"❌ Error al guardar el ingreso: {e}"
+                    f"❌ Error al guardar "
+                    f"el ingreso: {e}"
                 )
 
 
@@ -641,20 +859,13 @@ else:
         "### 📉 Nuevo Gasto (Compra / Inversión)"
     )
 
-
-    # --------------------------------------------------------
-    # DATOS DEL GASTO
-    # --------------------------------------------------------
-
     proveedor = st.text_input(
         "Proveedor (ej: xTool, Gestor):"
     )
 
-
     concepto_gasto = st.text_input(
         "Concepto del gasto:"
     )
-
 
     total_pagado = st.number_input(
 
@@ -665,20 +876,13 @@ else:
         step=1.0
     )
 
-
-    # --------------------------------------------------------
-    # JUSTIFICANTE
-    # --------------------------------------------------------
-
     st.markdown(
         "#### 📎 Justificante"
     )
 
-
     foto_gasto = st.camera_input(
         "📷 Hacer foto del justificante"
     )
-
 
     archivo_gasto = st.file_uploader(
 
@@ -697,20 +901,14 @@ else:
         key="archivo_gasto"
     )
 
-
-    # Foto de cámara tiene prioridad
-    # sobre archivo subido.
-
     archivo_final = (
+
         foto_gasto
+
         if foto_gasto is not None
+
         else archivo_gasto
     )
-
-
-    # --------------------------------------------------------
-    # GUARDAR GASTO
-    # --------------------------------------------------------
 
     if st.button(
         "💾 Guardar gasto",
@@ -720,7 +918,8 @@ else:
         if hoja_gastos is None:
 
             st.error(
-                "No hay conexión con la hoja de gastos."
+                "No hay conexión con "
+                "la hoja de gastos."
             )
 
         elif not proveedor.strip():
@@ -732,34 +931,37 @@ else:
         elif not concepto_gasto.strip():
 
             st.warning(
-                "Introduce el concepto del gasto."
+                "Introduce el concepto "
+                "del gasto."
             )
 
         elif total_pagado <= 0:
 
             st.warning(
-                "Introduce un importe mayor que 0 €."
+                "Introduce un importe "
+                "mayor que 0 €."
+            )
+
+        elif drive is None:
+
+            st.error(
+                "🔐 Primero debes autorizar "
+                "Google Drive."
             )
 
         else:
 
-            # -----------------------------------------------
-            # CALCULAR IVA
-            # -----------------------------------------------
+            base = (
+                total_pagado / 1.21
+            )
 
-            base = total_pagado / 1.21
-
-            iva = total_pagado - base
-
+            iva = (
+                total_pagado - base
+            )
 
             link_drive = ""
 
             error_drive = None
-
-
-            # -----------------------------------------------
-            # SUBIR JUSTIFICANTE
-            # -----------------------------------------------
 
             if archivo_final is not None:
 
@@ -782,11 +984,6 @@ else:
 
                     error_drive = str(e)
 
-
-            # -----------------------------------------------
-            # GUARDAR EN SHEETS
-            # -----------------------------------------------
-
             try:
 
                 hoja_gastos.append_row(
@@ -805,48 +1002,49 @@ else:
 
                         round(iva, 2),
 
-                        round(total_pagado, 2),
+                        round(
+                            total_pagado,
+                            2
+                        ),
 
                         link_drive
                     ],
 
-                    value_input_option="USER_ENTERED"
+                    value_input_option=
+                        "USER_ENTERED"
                 )
-
-
-                # -------------------------------------------
-                # MENSAJE FINAL
-                # -------------------------------------------
 
                 if error_drive:
 
                     st.warning(
                         "⚠️ Gasto guardado en Sheets, "
-                        "pero no se pudo subir el justificante a Drive."
+                        "pero no se pudo subir "
+                        "el justificante a Drive."
                     )
 
                     st.error(
-                        f"Detalle del error de Drive: "
+                        "Detalle del error de Drive: "
                         f"{error_drive}"
                     )
 
                 else:
 
                     st.success(
-                        "✅ Gasto registrado correctamente."
+                        "✅ Gasto registrado "
+                        "correctamente."
                     )
-
 
                 if link_drive:
 
                     st.markdown(
-                        f"📎 [Abrir justificante en Google Drive]"
+                        "📎 [Abrir justificante "
+                        "en Google Drive]"
                         f"({link_drive})"
                     )
-
 
             except Exception as e:
 
                 st.error(
-                    f"❌ Error al guardar el gasto: {e}"
+                    f"❌ Error al guardar "
+                    f"el gasto: {e}"
                 )
