@@ -87,7 +87,6 @@ def obtener_ruta_contabilidad(tipo):
     id_tipo = obtener_carpeta_drive(tipo, id_trimestre)
 
     return id_tipo
-st.write("Carpeta T4 encontrada:", id_carpeta_t4)
 
 if cliente:
     try:
