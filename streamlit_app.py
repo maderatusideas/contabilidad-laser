@@ -54,10 +54,11 @@ def buscar_carpeta(nombre, carpeta_padre):
 
     archivos = resultado.get("files", [])
     return archivos[0]["id"] if archivos else None
-    id_carpeta_principal = st.secrets["google_drive"]["id_carpeta_principal"]
-    nombre_carpeta_prueba = buscar_carpeta("2026", id_carpeta_principal)
-    st.write("Carpeta 2026 encontrada:", nombre_carpeta_prueba)
-    
+
+id_carpeta_principal = st.secrets["google_drive"]["id_carpeta_principal"]
+nombre_carpeta_prueba = buscar_carpeta("2026", id_carpeta_principal)
+st.write("Carpeta 2026 encontrada:", nombre_carpeta_prueba)
+
 if cliente:
     try:
         id_sheet = st.secrets["google_sheets"]["id_documento"]
