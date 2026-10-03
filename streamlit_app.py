@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import datetime
 import io
 import gspread
+import httpx
 
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
@@ -86,8 +87,44 @@ if not st.user.is_logged_in:
 st.success(
     f"👤 Google conectado: {st.user.email}"
 )
+
 st.write("LOGIN OK")
-st.write(st.user.to_dict())
+
+token_acceso = st.user.tokens.get("access")
+
+if token_acceso:
+
+    try:
+
+        respuesta = httpx.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={
+                "access_token": token_acceso
+            },
+            timeout=10
+        )
+
+        datos_token = respuesta.json()
+
+        st.write(
+            "Scopes concedidos:",
+            datos_token.get(
+                "scope",
+                "NO APARECEN"
+            )
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Error comprobando scopes: {e}"
+        )
+
+else:
+
+    st.error(
+        "No hay token de acceso."
+    )
 
 
 # ============================================================
