@@ -98,14 +98,20 @@ def conectar_drive_usuario():
 
         token_acceso = st.user.tokens["access"]
 
+        if not token_acceso:
+            st.error("Google no ha proporcionado un token de acceso para Drive.")
+            return None
+
         credenciales_oauth = OAuthCredentials(
-            token=token_acceso
+            token=token_acceso,
+            scopes=["https://www.googleapis.com/auth/drive"]
         )
 
         return build(
             "drive",
             "v3",
-            credentials=credenciales_oauth
+            credentials=credenciales_oauth,
+            cache_discovery=False
         )
 
     except Exception as e:
