@@ -96,32 +96,10 @@ def conectar_drive_usuario():
 
     try:
 
-        tokens = st.user.tokens
-
-        token_acceso = tokens.get("access")
-        token_refresh = tokens.get("refresh")
-
-        if not token_acceso:
-            raise Exception(
-                "No se ha recibido el token de acceso de Google."
-            )
-
-        if not token_refresh:
-            raise Exception(
-                "Google no ha proporcionado un refresh token. "
-                "Es necesario volver a iniciar sesión después de "
-                "activar la exposición del refresh token."
-            )
+        token_acceso = st.user.tokens["access"]
 
         credenciales_oauth = OAuthCredentials(
-            token=token_acceso,
-            refresh_token=token_refresh,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=st.secrets["auth"]["google"]["client_id"],
-            client_secret=st.secrets["auth"]["google"]["client_secret"],
-            scopes=[
-                "https://www.googleapis.com/auth/drive"
-            ]
+            token=token_acceso
         )
 
         return build(
