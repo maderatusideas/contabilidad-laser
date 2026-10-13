@@ -31,6 +31,10 @@ scopes_sheets = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+scopes_drive = [
+    "https://www.googleapis.com/auth/drive"
+]
+
 
 @st.cache_resource
 def obtener_credenciales():
@@ -64,7 +68,7 @@ cliente = conectar_google()
 
 
 # ============================================================
-# AUTENTICACIÓN DEL USUARIO PARA GOOGLE DRIVE
+# INICIO DE SESIÓN DEL USUARIO
 # ============================================================
 
 if not st.user.is_logged_in:
@@ -89,25 +93,24 @@ st.success(
 
 
 # ============================================================
-# CONEXIÓN GOOGLE DRIVE - CUENTA DEL USUARIO
+# CONEXIÓN GOOGLE DRIVE - OAUTH CON RENOVACIÓN AUTOMÁTICA
 # ============================================================
 
 def conectar_drive_usuario():
 
     try:
-
-        tokens = st.user.tokens
-
-        token_acceso = tokens.get("access")
-
-        if not token_acceso:
-            st.error(
-                "Google no ha proporcionado un access token válido."
-            )
-            return None
+        configuracion_oauth = dict(st.secrets["google_drive_oauth"])
 
         credenciales_oauth = OAuthCredentials(
-            token=token_acceso
+            token=None,
+            refresh_token=configuracion_oauth["refresh_token"],
+            token_uri=configuracion_oauth.get(
+                "token_uri",
+                "https://oauth2.googleapis.com/token"
+            ),
+            client_id=configuracion_oauth["client_id"],
+            client_secret=configuracion_oauth["client_secret"],
+            scopes=scopes_drive
         )
 
         return build(
@@ -117,10 +120,19 @@ def conectar_drive_usuario():
             cache_discovery=False
         )
 
-    except Exception as e:
+    except KeyError:
+        st.error(
+            "Falta configurar google_drive_oauth en los secretos "
+            "de Streamlit. Drive necesita un refresh_token de OAuth."
+        )
+        return None
+
+    except Exception:
 
         st.error(
-            f"Error al conectar con Google Drive: {e}"
+            "No se pudo preparar la conexión con Google Drive. "
+            "Revisa la configuración OAuth de Drive en los secretos "
+            "de Streamlit."
         )
 
         return None
@@ -435,9 +447,12 @@ if "REGISTRAR VENTA" in opcion:
                         carpeta_ingresos
                     )
 
-                except Exception as e:
+                except Exception:
 
-                    error_drive = str(e)
+                    error_drive = (
+                        "Comprueba la autorización OAuth de Drive y "
+                        "el acceso a la carpeta principal."
+                    )
 
 
             # ------------------------------------------------
@@ -615,9 +630,12 @@ else:
                         carpeta_gastos
                     )
 
-                except Exception as e:
+                except Exception:
 
-                    error_drive = str(e)
+                    error_drive = (
+                        "Comprueba la autorización OAuth de Drive y "
+                        "el acceso a la carpeta principal."
+                    )
 
 
             # ------------------------------------------------
