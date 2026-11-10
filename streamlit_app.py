@@ -235,14 +235,14 @@ def obtener_carpeta_drive(nombre, carpeta_padre):
     return resultado["id"]
 
 
-def obtener_ruta_contabilidad(tipo):
+def obtener_ruta_contabilidad(tipo, fecha_factura):
 
-    ahora_local = datetime.now()
-
-    anio = str(ahora_local.year)
+    # El año y el trimestre salen de la FECHA DE LA FACTURA,
+    # no del día en que se sube (importante para el IVA).
+    anio = str(fecha_factura.year)
 
     trimestre = (
-        f"T{((ahora_local.month - 1) // 3) + 1}"
+        f"T{((fecha_factura.month - 1) // 3) + 1}"
     )
 
     id_anio = obtener_carpeta_drive(
@@ -294,7 +294,6 @@ def subir_archivo_drive(archivo, carpeta_id):
 
 ahora = datetime.now()
 
-fecha_str = ahora.strftime("%Y-%m-%d")
 hora_str = ahora.strftime("%H:%M:%S")
 
 
@@ -309,6 +308,25 @@ opcion = st.radio(
         "💰 REGISTRAR VENTA (Ingreso)"
     ],
     horizontal=True
+)
+
+
+# ============================================================
+# FECHA DE LA FACTURA (decide el trimestre del IVA)
+# ============================================================
+
+fecha_factura = st.date_input(
+    "📅 Fecha de la factura:",
+    value=ahora.date(),
+    max_value=ahora.date(),
+    format="DD/MM/YYYY"
+)
+
+fecha_str = fecha_factura.strftime("%Y-%m-%d")
+
+st.caption(
+    f"Se archivará en {fecha_factura.year} · "
+    f"T{((fecha_factura.month - 1) // 3) + 1}"
 )
 
 
@@ -438,7 +456,8 @@ if "REGISTRAR VENTA" in opcion:
 
                     carpeta_ingresos = (
                         obtener_ruta_contabilidad(
-                            "INGRESOS"
+                            "INGRESOS",
+                            fecha_factura
                         )
                     )
 
@@ -621,7 +640,8 @@ else:
 
                     carpeta_gastos = (
                         obtener_ruta_contabilidad(
-                            "GASTOS"
+                            "GASTOS",
+                            fecha_factura
                         )
                     )
 
