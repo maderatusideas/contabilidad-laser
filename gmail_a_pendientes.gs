@@ -60,8 +60,8 @@ function recogerFacturas() {
   const consulta =
     `has:attachment -label:${ETIQUETA_PROCESADA.replace('/', '-')} ` +
     `-in:sent -in:chats ` +
-    (desde ? `after:${desde} ` : '') +
-    `(${PALABRAS} OR label:${ETIQUETA_RECOGER.replace('/', '-')})`;
+    `((${desde ? `after:${desde} ` : ''}${PALABRAS}) ` +
+    `OR label:${ETIQUETA_RECOGER.replace('/', '-')})`;
 
   const hilos = GmailApp.search(consulta, 0, 50);
   let guardados = 0;
