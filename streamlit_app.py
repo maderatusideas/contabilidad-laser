@@ -2,6 +2,10 @@ import streamlit as st
 from datetime import datetime
 import io
 import gspread
+import json
+import base64
+import httpx
+from datetime import date
 
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
@@ -298,6 +302,85 @@ hora_str = ahora.strftime("%H:%M:%S")
 
 
 # ============================================================
+# LECTURA AUTOMÁTICA DE FACTURAS CON GEMINI
+# ============================================================
+
+MODELO_GEMINI = st.secrets.get("gemini", {}).get(
+    "modelo", "gemini-3.5-flash-lite"
+)
+
+INSTRUCCIONES_LECTURA = """
+Eres un asistente contable español. Lee esta factura o ticket de COMPRA
+y devuelve SOLO un JSON con estas claves:
+- proveedor: nombre comercial del emisor (texto corto)
+- fecha: fecha de emisión en formato AAAA-MM-DD
+- numero_factura: número de factura o ticket ("" si no aparece)
+- concepto: resumen breve de lo comprado (máx. 8 palabras)
+- base_imponible: número, suma de bases imponibles
+- iva: número, suma de cuotas de IVA
+- total: número, total pagado
+Si hay varios tipos de IVA, suma las bases y las cuotas.
+Si un dato no aparece, usa "" o 0. No inventes datos.
+"""
+
+
+def leer_factura_gemini(contenido, tipo_mime):
+    """Envía la factura a Gemini y devuelve un diccionario con los datos."""
+
+    clave = st.secrets.get("gemini", {}).get("api_key")
+
+    if not clave:
+        raise RuntimeError(
+            "Falta la clave de Gemini en los secretos ([gemini] api_key)."
+        )
+
+    respuesta = httpx.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{MODELO_GEMINI}:generateContent",
+        headers={"x-goog-api-key": clave},
+        json={
+            "contents": [{
+                "parts": [
+                    {"text": INSTRUCCIONES_LECTURA},
+                    {"inline_data": {
+                        "mime_type": tipo_mime,
+                        "data": base64.b64encode(contenido).decode()
+                    }}
+                ]
+            }],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0
+            }
+        },
+        timeout=60
+    )
+
+    respuesta.raise_for_status()
+
+    texto = (
+        respuesta.json()["candidates"][0]["content"]["parts"][0]["text"]
+    )
+
+    return json.loads(texto)
+
+
+def a_numero(valor):
+    try:
+        return round(float(str(valor).replace(",", ".")), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# Los datos leídos se aplican a los campos ANTES de dibujarlos
+if "lectura_pendiente" in st.session_state:
+    for clave_campo, valor in st.session_state.pop(
+        "lectura_pendiente"
+    ).items():
+        st.session_state[clave_campo] = valor
+
+
+# ============================================================
 # SELECCIÓN DE OPERACIÓN
 # ============================================================
 
@@ -315,11 +398,14 @@ opcion = st.radio(
 # FECHA DE LA FACTURA (decide el trimestre del IVA)
 # ============================================================
 
+if "fecha_factura" not in st.session_state:
+    st.session_state["fecha_factura"] = ahora.date()
+
 fecha_factura = st.date_input(
     "📅 Fecha de la factura:",
-    value=ahora.date(),
     max_value=ahora.date(),
-    format="DD/MM/YYYY"
+    format="DD/MM/YYYY",
+    key="fecha_factura"
 )
 
 fecha_str = fecha_factura.strftime("%Y-%m-%d")
@@ -539,34 +625,7 @@ else:
     )
 
 
-    proveedor = st.text_input(
-        "Proveedor (ej: xTool, Gestor):"
-    )
-
-
-    concepto_gasto = st.text_input(
-        "Concepto del gasto:"
-    )
-
-
-    total_pagado = st.number_input(
-        "Total pagado (€):",
-        min_value=0.0,
-        step=1.0
-    )
-
-
     st.markdown("#### 📎 Justificante")
-
-
-    # ========================================================
-    # CÁMARA - 1080p
-    # ========================================================
-
-    foto_gasto = st.camera_input(
-        "📷 Hacer foto del justificante",
-        resolution="1080p"
-    )
 
 
     archivo_gasto = st.file_uploader(
@@ -583,11 +642,131 @@ else:
     )
 
 
+    # ========================================================
+    # CÁMARA - 1080p
+    # ========================================================
+
+    foto_gasto = st.camera_input(
+        "📷 O haz una foto del justificante",
+        resolution="1080p"
+    )
+
+
     archivo_final = (
         foto_gasto
         if foto_gasto is not None
         else archivo_gasto
     )
+
+
+    # ========================================================
+    # LEER FACTURA AUTOMÁTICAMENTE
+    # ========================================================
+
+    if archivo_final is not None and st.button(
+        "🤖 Leer factura automáticamente"
+    ):
+
+        with st.spinner("Leyendo la factura..."):
+
+            try:
+
+                tipo_mime = (
+                    getattr(archivo_final, "type", None)
+                    or "image/jpeg"
+                )
+
+                datos = leer_factura_gemini(
+                    archivo_final.getvalue(),
+                    tipo_mime
+                )
+
+                pendiente = {
+                    "g_proveedor": str(datos.get("proveedor", "")),
+                    "g_concepto": str(datos.get("concepto", "")),
+                    "g_num_factura": str(
+                        datos.get("numero_factura", "")
+                    ),
+                    "g_total": a_numero(datos.get("total")),
+                    "g_base": a_numero(datos.get("base_imponible")),
+                    "g_iva": a_numero(datos.get("iva")),
+                }
+
+                try:
+                    fecha_leida = date.fromisoformat(
+                        str(datos.get("fecha", ""))[:10]
+                    )
+                    if fecha_leida <= ahora.date():
+                        pendiente["fecha_factura"] = fecha_leida
+                except ValueError:
+                    pass
+
+                st.session_state["lectura_pendiente"] = pendiente
+                st.session_state["lectura_ok"] = True
+                st.rerun()
+
+            except Exception as e:
+
+                st.error(
+                    "No se pudo leer la factura automáticamente. "
+                    f"Rellena los datos a mano. ({e})"
+                )
+
+
+    if st.session_state.pop("lectura_ok", False):
+
+        st.success(
+            "✅ Factura leída. REVISA los datos antes de guardar."
+        )
+
+
+    st.markdown("#### 🧾 Datos de la factura")
+
+
+    proveedor = st.text_input(
+        "Proveedor (ej: xTool, Gestor):",
+        key="g_proveedor"
+    )
+
+
+    concepto_gasto = st.text_input(
+        "Concepto del gasto:",
+        key="g_concepto"
+    )
+
+
+    num_factura_gasto = st.text_input(
+        "Nº de factura (opcional):",
+        key="g_num_factura"
+    )
+
+
+    total_pagado = st.number_input(
+        "Total pagado (€):",
+        min_value=0.0,
+        step=1.0,
+        key="g_total"
+    )
+
+
+    col_base, col_iva = st.columns(2)
+
+    with col_base:
+        base_leida = st.number_input(
+            "Base imponible (€):",
+            min_value=0.0,
+            step=1.0,
+            key="g_base",
+            help="Si lo dejas en 0 se calcula con IVA del 21 %."
+        )
+
+    with col_iva:
+        iva_leido = st.number_input(
+            "IVA soportado (€):",
+            min_value=0.0,
+            step=1.0,
+            key="g_iva"
+        )
 
 
     if st.button(
@@ -621,9 +800,21 @@ else:
 
         else:
 
-            base = total_pagado / 1.21
+            if base_leida > 0:
 
-            iva = total_pagado - base
+                base = base_leida
+
+                iva = (
+                    iva_leido
+                    if iva_leido > 0
+                    else total_pagado - base_leida
+                )
+
+            else:
+
+                base = total_pagado / 1.21
+
+                iva = total_pagado - base
 
             link_drive = ""
 
@@ -669,7 +860,11 @@ else:
                         fecha_str,
                         hora_str,
                         proveedor,
-                        concepto_gasto,
+                        (
+                            f"{concepto_gasto} (Fra. {num_factura_gasto})"
+                            if num_factura_gasto.strip()
+                            else concepto_gasto
+                        ),
                         round(base, 2),
                         round(iva, 2),
                         round(total_pagado, 2),
