@@ -292,6 +292,68 @@ def subir_archivo_drive(archivo, carpeta_id):
     )
 
 
+
+
+# ============================================================
+# CARPETA "FACTURAS PENDIENTES" (escaneos de la impresora)
+# ============================================================
+
+class ArchivoPendiente:
+    """Imita un archivo subido para reutilizar la misma lógica."""
+
+    def __init__(self, nombre, tipo, contenido):
+        self.name = nombre
+        self.type = tipo
+        self._contenido = contenido
+
+    def getvalue(self):
+        return self._contenido
+
+
+def listar_pendientes():
+
+    id_pendientes = (
+        st.secrets["google_drive"].get("id_carpeta_pendientes")
+        or buscar_carpeta("FACTURAS PENDIENTES", id_carpeta_principal)
+    )
+
+    if not id_pendientes:
+        return None, []
+
+    resultado = drive.files().list(
+        q=(
+            f"'{id_pendientes}' in parents and trashed = false "
+            "and mimeType != 'application/vnd.google-apps.folder'"
+        ),
+        spaces="drive",
+        fields="files(id, name, mimeType, webViewLink)",
+        orderBy="createdTime"
+    ).execute()
+
+    return id_pendientes, resultado.get("files", [])
+
+
+def descargar_archivo_drive(id_archivo):
+
+    return drive.files().get_media(fileId=id_archivo).execute()
+
+
+def mover_archivo_drive(id_archivo, carpeta_origen, carpeta_destino):
+    """Mueve (no copia) el archivo: desaparece de PENDIENTES."""
+
+    archivo = drive.files().update(
+        fileId=id_archivo,
+        addParents=carpeta_destino,
+        removeParents=carpeta_origen,
+        fields="id, webViewLink"
+    ).execute()
+
+    return archivo.get(
+        "webViewLink",
+        f"https://drive.google.com/file/d/{archivo['id']}/view"
+    )
+
+
 # ============================================================
 # FECHA Y HORA
 # ============================================================
@@ -625,7 +687,73 @@ else:
     )
 
 
+    # Mensaje del último guardado (sobrevive al reinicio de la página)
+    aviso = st.session_state.pop("aviso_guardado", None)
+
+    if aviso:
+        st.success(aviso[0])
+        if aviso[1]:
+            st.markdown(
+                f"📎 [Abrir justificante en Google Drive]({aviso[1]})"
+            )
+
+
+    # ========================================================
+    # FACTURAS PENDIENTES (escaneadas en Drive)
+    # ========================================================
+
+    archivo_pendiente = None
+    pendiente_info = None
+    id_carpeta_pendientes = None
+    SIN_PENDIENTE = "— Ninguna: subir un archivo nuevo —"
+
+    try:
+        id_carpeta_pendientes, pendientes = listar_pendientes()
+    except Exception:
+        pendientes = []
+        st.caption("⚠️ No se pudo revisar la carpeta de pendientes.")
+
+    if pendientes:
+
+        nombres = [SIN_PENDIENTE] + [f["name"] for f in pendientes]
+
+        elegido = st.selectbox(
+            f"📥 Facturas pendientes en Drive ({len(pendientes)})",
+            nombres,
+            key="pend_sel"
+        )
+
+        if elegido != SIN_PENDIENTE:
+
+            pendiente_info = next(
+                f for f in pendientes if f["name"] == elegido
+            )
+
+            if st.session_state.get("pend_id") != pendiente_info["id"]:
+
+                with st.spinner("Descargando la factura..."):
+                    st.session_state["pend_bytes"] = (
+                        descargar_archivo_drive(pendiente_info["id"])
+                    )
+                    st.session_state["pend_id"] = pendiente_info["id"]
+
+            archivo_pendiente = ArchivoPendiente(
+                pendiente_info["name"],
+                pendiente_info["mimeType"],
+                st.session_state["pend_bytes"]
+            )
+
+            st.markdown(
+                f"👀 [Ver la factura]({pendiente_info.get('webViewLink', '')})"
+                " · al guardar se moverá a su trimestre."
+            )
+
+
     st.markdown("#### 📎 Justificante")
+
+
+    if archivo_pendiente is not None:
+        st.caption("Usando la factura pendiente seleccionada.")
 
 
     archivo_gasto = st.file_uploader(
@@ -653,9 +781,9 @@ else:
 
 
     archivo_final = (
-        foto_gasto
-        if foto_gasto is not None
-        else archivo_gasto
+        archivo_pendiente
+        or foto_gasto
+        or archivo_gasto
     )
 
 
@@ -836,10 +964,20 @@ else:
                         )
                     )
 
-                    link_drive = subir_archivo_drive(
-                        archivo_final,
-                        carpeta_gastos
-                    )
+                    if archivo_pendiente is not None:
+
+                        link_drive = mover_archivo_drive(
+                            pendiente_info["id"],
+                            id_carpeta_pendientes,
+                            carpeta_gastos
+                        )
+
+                    else:
+
+                        link_drive = subir_archivo_drive(
+                            archivo_final,
+                            carpeta_gastos
+                        )
 
                 except Exception:
 
@@ -887,9 +1025,31 @@ else:
 
                 else:
 
-                    st.success(
-                        "✅ Gasto registrado correctamente."
+                    # Guardado completo: aviso y formulario limpio
+                    st.session_state["aviso_guardado"] = (
+                        "✅ Gasto registrado correctamente"
+                        + (
+                            " y factura movida de PENDIENTES a su trimestre."
+                            if archivo_pendiente is not None
+                            else "."
+                        ),
+                        link_drive
                     )
+
+                    st.session_state["lectura_pendiente"] = {
+                        "pend_sel": SIN_PENDIENTE,
+                        "g_proveedor": "",
+                        "g_concepto": "",
+                        "g_num_factura": "",
+                        "g_total": 0.0,
+                        "g_base": 0.0,
+                        "g_iva": 0.0,
+                    }
+
+                    st.session_state.pop("pend_id", None)
+                    st.session_state.pop("pend_bytes", None)
+
+                    st.rerun()
 
 
                 if link_drive:
