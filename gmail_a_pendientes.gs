@@ -3,7 +3,7 @@
  *
  * 1) ~00:00 Guarda los adjuntos de las facturas en "FACTURAS PENDIENTES"
  *    y marca el correo con "Facturas/Procesada" para no repetirlo nunca.
- * 2) ~07:00 Envía un resumen diario (ventas, pagos, envíos, facturas).
+ * 2) ~07:00 Envía un resumen diario (ventas, pagos, envíos, gastos, facturas).
  *
  * USO: pega este código en script.google.com, ejecuta "instalar" una
  * sola vez y acepta los permisos. A partir de ahí funciona solo.
@@ -22,6 +22,7 @@ const TAMANO_MINIMO_IMAGEN = 30 * 1024; // ignora logos y firmas pequeñas
 // ---- Resumen diario ----
 const DESTINATARIOS_RESUMEN = 'oscarmocha1@gmail.com, paplisia2009@gmail.com';
 const HORA_RESUMEN = 7;
+const ID_HOJA_CONTABILIDAD = '1JYa4juKbMj5mJcqL-4eWTmXdvHXwrLG63FN8aABSgIo';
 const CATEGORIAS = [
   { nombre: '🛍️ Ventas y pedidos', dominios: ['etsy.com', 'shopify.com'] },
   { nombre: '💶 Pagos', dominios: ['paypal.com', 'paypal.es', 'stripe.com'] },
@@ -168,6 +169,27 @@ function enviarResumen() {
     ).join('') + '</ul>';
   });
 
+  // Gastos registrados en la hoja desde el último resumen
+  const hojaGastos = SpreadsheetApp.openById(ID_HOJA_CONTABILIDAD).getSheetByName('GASTOS');
+  const ultimaFila = hojaGastos.getLastRow();
+  const filaAnterior = Number(props.getProperty('ULTIMA_FILA_GASTOS') || ultimaFila);
+  const nuevos = ultimaFila > filaAnterior
+    ? hojaGastos.getRange(filaAnterior + 1, 1, ultimaFila - filaAnterior, 7).getValues()
+    : [];
+  const aNumero = v => typeof v === 'number' ? v : (parseFloat(String(v).replace(',', '.')) || 0);
+  const totalGastos = nuevos.reduce((suma, f) => suma + aNumero(f[6]), 0);
+  const euros = n => n.toFixed(2).replace('.', ',') + ' €';
+  const fechaTexto = v => v instanceof Date ? Utilities.formatDate(v, zona, 'dd/MM') : String(v);
+
+  html += `<h3 style="margin:16px 0 6px">💸 Gastos registrados (${nuevos.length})</h3>` +
+    (nuevos.length
+      ? '<ul style="padding-left:18px;margin:0">' + nuevos.map(f =>
+          `<li style="margin-bottom:4px"><b>${esc(f[2])}</b> · ${esc(f[3])} · ` +
+          `${euros(aNumero(f[6]))} <span style="color:#777">· fra. ${fechaTexto(f[0])}</span></li>`
+        ).join('') + '</ul>' +
+        `<div style="margin-top:4px">Total: <b>${euros(totalGastos)}</b></div>`
+      : '<div style="color:#999">Ninguno desde el último resumen</div>');
+
   html += `<h3 style="margin:16px 0 6px">🧾 Facturas</h3>` +
     `<div>Recogidas del correo: <b>${recogidas.length}</b></div>` +
     (recogidas.length
@@ -185,6 +207,7 @@ function enviarResumen() {
   );
 
   props.setProperty('RECOGIDAS_PARA_RESUMEN', '[]');
+  props.setProperty('ULTIMA_FILA_GASTOS', String(ultimaFila));
 }
 
 
