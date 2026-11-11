@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import datetime
 import io
 import gspread
+import pandas as pd
 import json
 import base64
 import httpx
@@ -381,6 +382,20 @@ y devuelve SOLO un JSON con estas claves:
 - base_imponible: número, suma de bases imponibles
 - iva: número, suma de cuotas de IVA
 - total: número, total pagado
+- lineas: lista con cada producto comprado, cada uno con:
+  - descripcion: nombre del producto tal cual (texto corto)
+  - cantidad: número de unidades
+  - largo_mm, ancho_mm, grosor_mm: medidas en milímetros si aparecen (0 si no)
+  - precio_unitario: precio por unidad SIN IVA
+  - es_insumo: true si es materia prima o consumible de producción
+    (madera, tablero, MDF, contrachapado, metacrilato, LED, tira LED,
+    cable, electrónica, tinta, limpiador de cabezal, embalaje, cajas,
+    cristalería para personalizar); false si es herramienta, mueble,
+    servicio, transporte o corte
+  - categoria: una de "Madera", "Metacrilato", "Componente / LED",
+    "Componente / Electrónica", "Tinta / Consumible UV", "Embalaje",
+    "Cristalería / Menaje", "Otro"
+  - dudoso: true si alguna medida o precio no está claro en la factura
 Si hay varios tipos de IVA, suma las bases y las cuotas.
 Si un dato no aparece, usa "" o 0. No inventes datos.
 """
@@ -432,6 +447,119 @@ def a_numero(valor):
         return round(float(str(valor).replace(",", ".")), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+# ============================================================
+# HOJA DE INSUMOS: referencia de precios y alta de materiales
+# ============================================================
+
+ID_HOJA_INSUMOS = st.secrets.get("google_sheets", {}).get(
+    "id_insumos", "1YjuWESYhlnqDxKEMhZsISpjs33OwioURpYX7Icm6Bc0"
+)
+
+
+def num_hoja(valor):
+    """Convierte '€0,0004031', '29.768', '1.43' o 12 en número."""
+    t = str(valor or "").replace("€", "").replace(" ", "").strip()
+    if not t:
+        return 0.0
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    elif t.count(".") == 1 and len(t.split(".")[1]) == 3 and t.split(".")[0].isdigit() and int(t.split(".")[0]) > 0 and len(t.split(".")[0]) <= 3 and t.replace(".", "").isdigit() and int(t.replace(".", "")) >= 1000:
+        t = t.replace(".", "")  # separador de miles: 2.440
+    try:
+        return float(t)
+    except ValueError:
+        return 0.0
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def leer_insumos():
+    """Devuelve las filas de la hoja de insumos (o [] si no hay acceso)."""
+    try:
+        hoja = cliente.open_by_key(ID_HOJA_INSUMOS).worksheet(
+            "Materia Prima e Insumos"
+        )
+        return hoja.get_all_values()[1:]
+    except Exception:
+        return []
+
+
+def referencia_cm2(categoria, grosor):
+    """Coste por cm² de referencia para una categoría y grosor."""
+    precios = []
+    for f in leer_insumos():
+        if len(f) < 10:
+            continue
+        cat_ok = categoria.split(" ")[0].lower() in f[1].lower()
+        grosor_ok = not grosor or abs(num_hoja(f[6]) - grosor) < 0.6
+        valor = num_hoja(f[9])
+        if cat_ok and grosor_ok and valor > 0:
+            precios.append(valor)
+    if not precios:
+        return None
+    precios.sort()
+    return precios[len(precios) // 2]
+
+
+def preparar_lineas(lineas):
+    """Filas propuestas para insumos, con coste/cm² y aviso de precio."""
+    filas = []
+    for l in lineas or []:
+        if not l.get("es_insumo"):
+            continue
+        largo = a_numero(l.get("largo_mm"))
+        ancho = a_numero(l.get("ancho_mm"))
+        grosor = a_numero(l.get("grosor_mm"))
+        coste = a_numero(l.get("precio_unitario"))
+        categoria = str(l.get("categoria") or "Otro")
+        area = round(largo * ancho / 100, 2) if largo and ancho else 0.0
+        cm2 = round(coste / area, 6) if area and coste else 0.0
+        aviso = "⚠️ Revisa medidas o precio" if l.get("dudoso") else ""
+        ref = referencia_cm2(categoria, grosor) if cm2 else None
+        if ref and cm2:
+            ratio = cm2 / ref
+            if ratio > 1.3:
+                aviso = f"⚠️ {ratio:.1f} veces más caro por cm² que lo habitual"
+            elif ratio < 0.7:
+                aviso = f"⚠️ {1 / ratio:.1f} veces más barato por cm²: ¿medidas bien?"
+        filas.append({
+            "Añadir": True,
+            "Material": str(l.get("descripcion", ""))[:80],
+            "Categoría": categoria,
+            "Largo (mm)": largo,
+            "Ancho (mm)": ancho,
+            "Grosor (mm)": grosor,
+            "Coste unidad (€ sin IVA)": coste,
+            "Coste por cm² (€)": cm2,
+            "Aviso": aviso,
+        })
+    return filas
+
+
+def guardar_insumos(filas, proveedor, num_factura, fecha_txt):
+    """Añade las filas marcadas a la hoja de insumos."""
+    hoja = cliente.open_by_key(ID_HOJA_INSUMOS).worksheet(
+        "Materia Prima e Insumos"
+    )
+    nuevas = []
+    for f in filas:
+        if not f.get("Añadir"):
+            continue
+        largo, ancho = f["Largo (mm)"] or 0, f["Ancho (mm)"] or 0
+        coste = f["Coste unidad (€ sin IVA)"] or 0
+        area = round(largo * ancho / 100, 2) if largo and ancho else ""
+        cm2 = round(coste / area, 6) if area and coste else ""
+        nota = f"Fra. {num_factura or 's/n'} ({fecha_txt}). Base sin IVA. Añadido desde la app."
+        nuevas.append([
+            f["Material"], f["Categoría"], proveedor, "",
+            largo or "", ancho or "", f["Grosor (mm)"] or "",
+            coste, area, cm2, nota
+        ])
+    if nuevas:
+        hoja.append_rows(nuevas, value_input_option="USER_ENTERED")
+        leer_insumos.clear()
+    return len(nuevas)
 
 
 # Los datos leídos se aplican a los campos ANTES de dibujarlos
@@ -830,6 +958,9 @@ else:
                     pass
 
                 st.session_state["lectura_pendiente"] = pendiente
+                st.session_state["insumos_propuestos"] = preparar_lineas(
+                    datos.get("lineas")
+                )
                 st.session_state["lectura_ok"] = True
                 st.rerun()
 
@@ -895,6 +1026,37 @@ else:
             step=1.0,
             key="g_iva"
         )
+
+
+    # ========================================================
+    # MATERIALES DETECTADOS → HOJA DE INSUMOS
+    # ========================================================
+
+    insumos_editados = None
+
+    if st.session_state.get("insumos_propuestos"):
+
+        st.markdown("#### 🪵 Materiales detectados para insumos")
+
+        if any(f["Aviso"] for f in st.session_state["insumos_propuestos"]):
+            st.warning(
+                "Hay líneas con aviso: revisa medidas y precio antes de guardar. "
+                "Si es un error de cobro, reclámalo al proveedor."
+            )
+
+        st.caption(
+            "Desmarca lo que no quieras guardar y corrige lo necesario. "
+            "Se añadirá a la hoja de insumos al guardar el gasto."
+        )
+
+        insumos_editados = st.data_editor(
+            pd.DataFrame(st.session_state["insumos_propuestos"]),
+            key="editor_insumos",
+            use_container_width=True,
+            num_rows="fixed",
+            hide_index=True,
+            disabled=["Coste por cm² (€)", "Aviso"],
+        ).fillna(0).to_dict("records")
 
 
     if st.button(
@@ -1025,6 +1187,30 @@ else:
 
                 else:
 
+                    # Materiales a la hoja de insumos
+                    texto_insumos = ""
+
+                    if insumos_editados:
+
+                        try:
+                            n = guardar_insumos(
+                                insumos_editados,
+                                proveedor,
+                                num_factura_gasto,
+                                fecha_factura.strftime("%d/%m/%Y")
+                            )
+                            if n:
+                                texto_insumos = f" {n} material(es) añadidos a insumos."
+                        except Exception as e:
+                            texto_insumos = (
+                                " ⚠️ No se pudieron guardar los insumos "
+                                f"({e}). ¿Está compartida la hoja de insumos "
+                                "con la cuenta de servicio?"
+                            )
+
+                    st.session_state.pop("insumos_propuestos", None)
+                    st.session_state.pop("editor_insumos", None)
+
                     # Guardado completo: aviso y formulario limpio
                     st.session_state["aviso_guardado"] = (
                         "✅ Gasto registrado correctamente"
@@ -1032,7 +1218,7 @@ else:
                             " y factura movida de PENDIENTES a su trimestre."
                             if archivo_pendiente is not None
                             else "."
-                        ),
+                        ) + texto_insumos,
                         link_drive
                     )
 
