@@ -92,8 +92,13 @@ function recogerFacturas() {
       );
 
       mensaje.getAttachments({ includeInlineImages: false }).forEach(adjunto => {
-        const tipo = adjunto.getContentType();
-        if (TIPOS_VALIDOS.indexOf(tipo) === -1) return;
+        const nombreAdj = (adjunto.getName() || '').toLowerCase();
+        const porExtension = /\.pdf$/.test(nombreAdj) ? 'application/pdf'
+          : /\.(jpe?g)$/.test(nombreAdj) ? 'image/jpeg'
+          : /\.png$/.test(nombreAdj) ? 'image/png' : '';
+        const tipo = TIPOS_VALIDOS.indexOf(adjunto.getContentType()) !== -1
+          ? adjunto.getContentType() : porExtension;
+        if (!tipo) return;
         if (tipo !== 'application/pdf' && adjunto.getSize() < TAMANO_MINIMO_IMAGEN) return;
 
         const nombre = `${fecha} ${remitente} - ${adjunto.getName()}`;
