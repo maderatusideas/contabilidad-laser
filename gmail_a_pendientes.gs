@@ -31,6 +31,9 @@ const HORA_RESUMEN = 7;
 const ID_HOJA_CONTABILIDAD = '1JYa4juKbMj5mJcqL-4eWTmXdvHXwrLG63FN8aABSgIo';
 const ID_CARPETA_PRINCIPAL = '1h1HbsWqXxaK7h_S2oFo9GfKHd7vzkv9p'; // Contabilidad Láser
 const MODELO_GEMINI = 'gemini-3.5-flash-lite';
+const ID_HOJA_INSUMOS = '1YjuWESYhlnqDxKEMhZsISpjs33OwioURpYX7Icm6Bc0';
+const COPIAS_A_GUARDAR = 8;      // semanas de copias de seguridad que se conservan
+const HORAS_SIN_RECOGIDA = 30;   // si la tarea nocturna no corre en este tiempo, se avisa
 const INSTRUCCIONES_LECTURA = [
   'Eres un asistente contable español. Lee esta factura o ticket de COMPRA',
   'y devuelve SOLO un JSON con estas claves:',
@@ -88,8 +91,25 @@ function instalar() {
 }
 
 
-/** Tarea diaria: guarda los adjuntos de facturas nuevas en PENDIENTES. */
+/** Tarea nocturna: recoge facturas, las registra y hace la copia semanal. Si algo falla, avisa. */
 function recogerFacturas() {
+  try {
+    recogerFacturas_();
+    PropertiesService.getScriptProperties().setProperty('ULTIMA_RECOGIDA', String(Date.now()));
+  } catch (e) {
+    avisarFallo_('Recogida nocturna de facturas', e);
+    throw e;
+  }
+  try {
+    copiaSeguridadSemanal_();
+  } catch (e) {
+    avisarFallo_('Copia de seguridad semanal', e);
+  }
+}
+
+
+/** Guarda los adjuntos de facturas nuevas en PENDIENTES. */
+function recogerFacturas_() {
   const carpeta = DriveApp.getFolderById(ID_CARPETA_PENDIENTES);
   const procesada = obtenerEtiqueta_(ETIQUETA_PROCESADA);
   const recoger = obtenerEtiqueta_(ETIQUETA_RECOGER);
@@ -285,8 +305,19 @@ function aNumero_(v) {
 }
 
 
-/** Resumen diario: novedades de las últimas 24 h por categoría. */
+/** Resumen diario. Si falla, avisa. */
 function enviarResumen() {
+  try {
+    enviarResumen_();
+  } catch (e) {
+    avisarFallo_('Resumen diario', e);
+    throw e;
+  }
+}
+
+
+/** Resumen diario: novedades de las últimas 24 h por categoría. */
+function enviarResumen_() {
   const zona = 'Europe/Madrid';
   const hoy = Utilities.formatDate(new Date(), zona, 'dd/MM/yyyy');
   const todos = [].concat.apply([], CATEGORIAS.map(c => c.dominios));
@@ -374,6 +405,19 @@ function enviarResumen() {
         `<div style="margin-top:4px">Total: <b>${euros(totalGastos)}</b></div>`
       : '<div style="color:#999">Ninguno desde el último resumen</div>');
 
+  // Vigilancia: ¿ha corrido la tarea nocturna?
+  const ultimaRecogida = Number(props.getProperty('ULTIMA_RECOGIDA') || 0);
+  const horasSin = ultimaRecogida ? (Date.now() - ultimaRecogida) / 3600000 : null;
+  if (horasSin !== null && horasSin > HORAS_SIN_RECOGIDA) {
+    html += `<div style="margin-top:16px;padding:8px;background:#fde8e8;color:#9b1c1c">` +
+      `<b>🚨 La recogida nocturna no se ejecuta desde hace ${Math.round(horasSin)} h.</b> ` +
+      `Revisa los activadores del Apps Script.</div>`;
+  }
+  const ultimaCopia = props.getProperty('ULTIMA_COPIA');
+  if (ultimaCopia) {
+    html += `<div style="margin-top:8px;color:#777">💾 Última copia de seguridad: ${ultimaCopia}</div>`;
+  }
+
   html += `<h3 style="margin:16px 0 6px">🧾 Facturas</h3>` +
     `<div>Recogidas del correo: <b>${recogidas.length}</b></div>` +
     (recogidas.length
@@ -393,6 +437,54 @@ function enviarResumen() {
   props.setProperty('RECOGIDAS_PARA_RESUMEN', '[]');
   props.setProperty('ULTIMA_FILA_GASTOS', String(ultimaFila));
   props.setProperty('ACCIONES_PARA_RESUMEN', '[]');
+}
+
+
+/** Envía un correo de alarma con el error. */
+function avisarFallo_(tarea, e) {
+  try {
+    GmailApp.sendEmail(
+      DESTINATARIOS_RESUMEN,
+      `🚨 Fallo en el asistente: ${tarea}`,
+      `La tarea "${tarea}" ha fallado.\n\nError: ${e && e.message ? e.message : e}\n\n` +
+      `Fecha: ${Utilities.formatDate(new Date(), 'Europe/Madrid', 'dd/MM/yyyy HH:mm')}\n` +
+      `Pásale este correo a Silvio para revisarlo.`,
+      { name: 'Asistente Madera Tus Ideas' }
+    );
+  } catch (err) {
+    Logger.log('No se pudo enviar el aviso: ' + err.message);
+  }
+}
+
+
+/** Los domingos copia las hojas de contabilidad e insumos y conserva las últimas semanas. */
+function copiaSeguridadSemanal_(forzar) {
+  const zona = 'Europe/Madrid';
+  if (!forzar && Utilities.formatDate(new Date(), zona, 'u') !== '7') return;
+  const carpeta = obtenerCarpeta_('Copias de seguridad', DriveApp.getFolderById(ID_CARPETA_PRINCIPAL));
+  const fecha = Utilities.formatDate(new Date(), zona, 'yyyy-MM-dd');
+  [ID_HOJA_CONTABILIDAD, ID_HOJA_INSUMOS].forEach(id => {
+    const original = DriveApp.getFileById(id);
+    const prefijo = `Copia ${original.getName()} · `;
+    original.makeCopy(prefijo + fecha, carpeta);
+    // Borrar las más antiguas (a la papelera, recuperables 30 días)
+    const copias = [];
+    const it = carpeta.getFiles();
+    while (it.hasNext()) {
+      const f = it.next();
+      if (f.getName().indexOf(prefijo) === 0) copias.push(f);
+    }
+    copias.sort((a, b) => b.getName().localeCompare(a.getName()))
+      .slice(COPIAS_A_GUARDAR).forEach(f => f.setTrashed(true));
+  });
+  PropertiesService.getScriptProperties()
+    .setProperty('ULTIMA_COPIA', Utilities.formatDate(new Date(), zona, 'dd/MM/yyyy HH:mm'));
+}
+
+
+/** Ejecútala a mano una vez para probar la copia de seguridad. */
+function probarCopiaSeguridad() {
+  copiaSeguridadSemanal_(true);
 }
 
 
