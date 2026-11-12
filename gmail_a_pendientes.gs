@@ -48,6 +48,10 @@ const INSTRUCCIONES_LECTURA = [
   'Si un dato no aparece, usa "" o 0. No inventes datos.'
 ].join('\n');
 const CATEGORIAS = [
+  { nombre: '🚨 Avisos de seguridad y servicios', alerta: true, dominios: [
+    'accounts.google.com', 'googleaistudio-noreply@google.com', 'cloudplatform-noreply@google.com',
+    'payments-noreply@google.com', 'google-noreply@google.com', 'workspace-noreply@google.com',
+    'streamlit.io', 'noreply@github.com'] },
   { nombre: '🛍️ Ventas y pedidos', dominios: ['etsy.com', 'shopify.com'] },
   { nombre: '💶 Pagos', dominios: ['paypal.com', 'paypal.es', 'stripe.com'] },
   { nombre: '📦 Envíos', dominios: ['correos.es', 'seur.com', 'seur.es', 'gls-spain.es', 'gls-group.eu', 'gls-group.com', 'mrw.es'] },
@@ -325,7 +329,7 @@ function enviarResumen_() {
     `newer_than:1d -in:sent -in:chats from:(${todos.join(' OR ')})`, 0, 100
   );
 
-  const grupos = CATEGORIAS.map(c => ({ nombre: c.nombre, dominios: c.dominios, items: [] }));
+  const grupos = CATEGORIAS.map(c => ({ nombre: c.nombre, alerta: !!c.alerta, dominios: c.dominios, items: [] }));
 
   hilos.forEach(hilo => {
     const mensaje = hilo.getMessages().pop();
@@ -354,7 +358,8 @@ function enviarResumen_() {
 
   let total = 0;
   grupos.forEach(g => {
-    html += `<h3 style="margin:16px 0 6px">${g.nombre} (${g.items.length})</h3>`;
+    if (g.alerta && !g.items.length) return;   // los avisos solo aparecen si hay alguno
+    html += `<h3 style="margin:16px 0 6px${g.alerta ? ';color:#b91c1c' : ''}">${g.nombre} (${g.items.length})</h3>`;
     if (!g.items.length) {
       html += `<div style="color:#999">Sin novedades</div>`;
       return;
@@ -427,9 +432,10 @@ function enviarResumen_() {
     `<div>Pendientes de registrar en la app: <b>${pendientes}</b></div>` +
     `</div>`;
 
+  const numAvisos = grupos.filter(g => g.alerta).reduce((n, g) => n + g.items.length, 0);
   GmailApp.sendEmail(
     DESTINATARIOS_RESUMEN,
-    `☀️ Resumen ${hoy} · ${total} novedades · ${pendientes} facturas pendientes`,
+    `${numAvisos ? '🚨 ' + numAvisos + ' aviso(s) · ' : ''}☀️ Resumen ${hoy} · ${total} novedades · ${pendientes} facturas pendientes`,
     'Abre este correo en un lector compatible con HTML.',
     { htmlBody: html, name: 'Asistente Madera Tus Ideas' }
   );
