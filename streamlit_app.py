@@ -401,7 +401,19 @@ Si un dato no aparece, usa "" o 0. No inventes datos.
 """
 
 
-def leer_factura_gemini(contenido, tipo_mime):
+INSTRUCCIONES_VENTA = """
+Eres un asistente contable español. Lee esta factura de VENTA emitida por
+el negocio y devuelve SOLO un JSON con estas claves:
+- fecha: fecha de la factura en formato AAAA-MM-DD
+- numero_factura: número de la factura ("" si no aparece)
+- concepto: resumen breve de lo vendido, con el nº de pedido si aparece
+  (máx. 12 palabras)
+- total: número, total cobrado con IVA incluido
+Si un dato no aparece, usa "" o 0. No inventes datos.
+"""
+
+
+def leer_factura_gemini(contenido, tipo_mime, instrucciones=None):
     """Envía la factura a Gemini y devuelve un diccionario con los datos."""
 
     clave = st.secrets.get("gemini", {}).get("api_key")
@@ -418,7 +430,7 @@ def leer_factura_gemini(contenido, tipo_mime):
         json={
             "contents": [{
                 "parts": [
-                    {"text": INSTRUCCIONES_LECTURA},
+                    {"text": instrucciones or INSTRUCCIONES_LECTURA},
                     {"inline_data": {
                         "mime_type": tipo_mime,
                         "data": base64.b64encode(contenido).decode()
@@ -642,18 +654,6 @@ if "REGISTRAR VENTA" in opcion:
     )
 
 
-    concepto = st.text_input(
-        "Concepto del pedido:"
-    )
-
-
-    total_cobrado = st.number_input(
-        "Total cobrado con IVA (€):",
-        min_value=0.0,
-        step=1.0
-    )
-
-
     st.markdown("#### 📎 Justificante")
 
 
@@ -685,6 +685,90 @@ if "REGISTRAR VENTA" in opcion:
         foto_ingreso
         if foto_ingreso is not None
         else archivo_ingreso
+    )
+
+
+    # ========================================================
+    # LEER FACTURA DE VENTA AUTOMÁTICAMENTE
+    # ========================================================
+
+    if archivo_final is not None and st.button(
+        "🤖 Leer factura automáticamente",
+        key="leer_venta"
+    ):
+
+        with st.spinner("Leyendo la factura..."):
+
+            try:
+
+                tipo_mime = (
+                    getattr(archivo_final, "type", None)
+                    or "image/jpeg"
+                )
+
+                datos = leer_factura_gemini(
+                    archivo_final.getvalue(),
+                    tipo_mime,
+                    INSTRUCCIONES_VENTA
+                )
+
+                pendiente = {
+                    "v_concepto": str(datos.get("concepto", "")),
+                    "v_total": a_numero(datos.get("total")),
+                }
+
+                try:
+                    fecha_leida = date.fromisoformat(
+                        str(datos.get("fecha", ""))[:10]
+                    )
+                    if fecha_leida <= ahora.date():
+                        pendiente["fecha_factura"] = fecha_leida
+                except ValueError:
+                    pass
+
+                st.session_state["lectura_pendiente"] = pendiente
+                st.session_state["venta_num_leido"] = str(
+                    datos.get("numero_factura", "")
+                ).strip()
+                st.session_state["lectura_venta_ok"] = True
+                st.rerun()
+
+            except Exception as e:
+
+                st.error(
+                    "No se pudo leer la factura automáticamente. "
+                    f"Rellena los datos a mano. ({e})"
+                )
+
+
+    if st.session_state.pop("lectura_venta_ok", False):
+
+        st.success(
+            "✅ Factura leída. REVISA los datos antes de guardar."
+        )
+
+    num_leido = st.session_state.get("venta_num_leido", "")
+
+    if num_leido and num_leido != codigo_factura:
+
+        st.warning(
+            f"⚠️ La factura dice **{num_leido}** pero la app va a "
+            f"asignar **{codigo_factura}**. No guardes hasta que "
+            "coincidan."
+        )
+
+
+    concepto = st.text_input(
+        "Concepto del pedido:",
+        key="v_concepto"
+    )
+
+
+    total_cobrado = st.number_input(
+        "Total cobrado con IVA (€):",
+        min_value=0.0,
+        step=1.0,
+        key="v_total"
     )
 
 
