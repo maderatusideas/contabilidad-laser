@@ -6,3 +6,4 @@ google-auth-oauthlib
 Authlib
 httpx
 streamlit-oauth
+reportlab

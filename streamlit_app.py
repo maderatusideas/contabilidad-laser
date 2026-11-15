@@ -296,6 +296,138 @@ def subir_archivo_drive(archivo, carpeta_id):
 
 
 # ============================================================
+# FACTURAS DE VENTA EN PDF (opción "Crear factura")
+# ============================================================
+
+LOGO_URL = (
+    "https://tienda.maderatusideas.com/cdn/shop/files/"
+    "logo-mti-cabecera-transparente_6752d194-cab6-4dfc-8c46-58909828125e.png"
+)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def descargar_logo():
+    try:
+        r = httpx.get(LOGO_URL, timeout=15, follow_redirects=True)
+        r.raise_for_status()
+        return r.content
+    except Exception:
+        return None
+
+
+def euros(valor):
+    texto = f"{valor:,.2f}"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+
+
+def generar_factura_pdf(numero, fecha, lineas, cliente, forma_pago):
+    """Crea la factura (simplificada o completa) y devuelve los bytes del PDF.
+
+    lineas: lista de (descripcion, cantidad, precio_unitario_con_iva)
+    cliente: dict con nombre, nif, direccion (vacíos si es particular)
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    emisor = st.secrets.get("emisor", {})
+    completa = bool(cliente.get("nif"))
+
+    total = round(sum(c * p for _, c, p in lineas), 2)
+    base = round(total / 1.21, 2)
+    iva = round(total - base, 2)
+
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    W, H = A4
+    x = 20 * mm
+    y = H - 25 * mm
+
+    logo = descargar_logo()
+    if logo:
+        try:
+            img = ImageReader(io.BytesIO(logo))
+            iw, ih = img.getSize()
+            alto = 18 * mm
+            ancho = alto * iw / ih
+            c.drawImage(img, W - x - ancho, y - 8 * mm, ancho, alto,
+                        mask="auto")
+        except Exception:
+            pass
+
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(x, y, "FACTURA" if completa else "FACTURA SIMPLIFICADA")
+    y -= 7 * mm
+    c.setFont("Helvetica", 11)
+    c.drawString(x, y, f"Nº {numero}   ·   Fecha: {fecha.strftime('%d/%m/%Y')}")
+
+    y -= 14 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(x, y, "Emisor")
+    c.setFont("Helvetica", 10)
+    for linea in [
+        f"{emisor.get('nombre', '')}  ·  Madera Tus Ideas",
+        f"NIF: {emisor.get('nif', '')}",
+        emisor.get("direccion", ""),
+    ]:
+        y -= 5 * mm
+        c.drawString(x, y, linea)
+
+    y -= 10 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(x, y, "Cliente")
+    c.setFont("Helvetica", 10)
+    datos_cliente = [cliente.get("nombre") or "Venta en persona (particular)"]
+    if completa:
+        datos_cliente += [f"NIF: {cliente['nif']}", cliente.get("direccion", "")]
+    for linea in datos_cliente:
+        y -= 5 * mm
+        c.drawString(x, y, linea)
+
+    y -= 14 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x, y, "Concepto")
+    c.drawRightString(W - x - 70 * mm, y, "Cant.")
+    c.drawRightString(W - x - 45 * mm, y, "Tipo IVA")
+    c.drawRightString(W - x, y, "Importe (IVA incl.)")
+    y -= 2 * mm
+    c.line(x, y, W - x, y)
+    c.setFont("Helvetica", 10)
+    for descripcion, cantidad, precio in lineas:
+        y -= 6 * mm
+        c.drawString(x, y, descripcion[:60])
+        c.drawRightString(W - x - 70 * mm, y, str(cantidad))
+        c.drawRightString(W - x - 45 * mm, y, "21 %")
+        c.drawRightString(W - x, y, euros(cantidad * precio))
+    y -= 3 * mm
+    c.line(x, y, W - x, y)
+
+    for etiqueta, valor, negrita in [
+        ("Base imponible", euros(base), False),
+        ("IVA 21 %", euros(iva), False),
+        ("TOTAL (IVA incluido)", euros(total), True),
+    ]:
+        y -= 6 * mm
+        c.setFont("Helvetica-Bold" if negrita else "Helvetica",
+                  11 if negrita else 10)
+        c.drawRightString(W - x - 30 * mm, y, etiqueta)
+        c.drawRightString(W - x, y, valor)
+
+    if forma_pago:
+        y -= 14 * mm
+        c.setFont("Helvetica", 9)
+        c.drawString(x, y, f"Forma de pago: {forma_pago}.")
+
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(x, 15 * mm, "Gracias por tu compra · tienda.maderatusideas.com")
+
+    c.showPage()
+    c.save()
+    return buffer.getvalue(), base, iva, total
+
+
+# ============================================================
 # CARPETA "FACTURAS PENDIENTES" (escaneos de la impresora)
 # ============================================================
 
@@ -590,7 +722,8 @@ opcion = st.radio(
     "Operación:",
     [
         "🛒 REGISTRAR COMPRA (Gasto)",
-        "💰 REGISTRAR VENTA (Ingreso)"
+        "💰 REGISTRAR VENTA (Ingreso)",
+        "🧾 CREAR FACTURA (venta en mano)"
     ],
     horizontal=True
 )
@@ -886,6 +1019,162 @@ if "REGISTRAR VENTA" in opcion:
                 st.error(
                     f"❌ Error al guardar el ingreso: {e}"
                 )
+
+
+# ============================================================
+# CREAR FACTURA (venta en mano)
+# ============================================================
+
+elif "CREAR FACTURA" in opcion:
+
+    st.markdown("### 🧾 Crear factura (venta en mano)")
+
+    emisor = st.secrets.get("emisor", {})
+
+    if not emisor.get("nif"):
+
+        st.error(
+            "Faltan los datos del emisor en los secretos de la app "
+            "([emisor] nombre, nif, direccion)."
+        )
+
+    elif hoja_ingresos is None:
+
+        st.error("No hay conexión con la hoja de ingresos.")
+
+    else:
+
+        ultima_fecha = None
+
+        try:
+            filas = hoja_ingresos.get_all_values()
+            filas_existentes = len(filas)
+            numero = f"F-{fecha_factura.year}-{filas_existentes:03d}"
+            if filas_existentes > 1:
+                ultima_fecha = date.fromisoformat(filas[-1][0][:10])
+        except Exception:
+            numero = None
+
+        if ultima_fecha and fecha_factura < ultima_fecha:
+            st.error(
+                f"⛔ La última factura es del "
+                f"{ultima_fecha.strftime('%d/%m/%Y')}. Esta no puede "
+                "llevar una fecha anterior (la numeración tiene que ir "
+                "en orden de fecha)."
+            )
+            numero = None
+
+        if numero:
+            st.info(f"Número de factura: **{numero}**")
+
+        with st.form("crear_factura", clear_on_submit=True):
+
+            articulo = st.text_input("Artículo:")
+
+            col1, col2 = st.columns(2)
+            cantidad = col1.number_input(
+                "Cantidad:", min_value=1, step=1, value=1
+            )
+            precio = col2.number_input(
+                "Precio por unidad con IVA (€):", min_value=0.0, step=1.0
+            )
+
+            forma_pago = st.selectbox(
+                "Forma de pago:",
+                ["Efectivo", "Bizum", "Tarjeta", "Transferencia", ""]
+            )
+
+            nombre_cliente = st.text_input("Nombre del cliente (opcional):")
+
+            with st.expander("Cliente empresa o autónomo (factura completa)"):
+                nif_cliente = st.text_input("NIF del cliente:")
+                direccion_cliente = st.text_input(
+                    "Dirección fiscal del cliente:"
+                )
+
+            enviar = st.form_submit_button(
+                "🧾 Crear y registrar factura", type="primary"
+            )
+
+        if enviar:
+
+            if not numero:
+                st.error("No se pudo calcular el número de factura.")
+            elif not articulo.strip() or precio <= 0:
+                st.warning("Indica el artículo y un precio mayor que 0 €.")
+            elif nif_cliente.strip() and not (
+                nombre_cliente.strip() and direccion_cliente.strip()
+            ):
+                st.warning(
+                    "Para la factura completa faltan el nombre "
+                    "y la dirección del cliente."
+                )
+            else:
+                try:
+                    cliente_datos = {
+                        "nombre": nombre_cliente.strip(),
+                        "nif": nif_cliente.strip().upper(),
+                        "direccion": direccion_cliente.strip(),
+                    }
+                    pdf, base, iva, total = generar_factura_pdf(
+                        numero,
+                        fecha_factura,
+                        [(articulo.strip(), int(cantidad), float(precio))],
+                        cliente_datos,
+                        forma_pago,
+                    )
+
+                    carpeta = obtener_ruta_contabilidad(
+                        "INGRESOS", fecha_factura
+                    )
+                    link_drive = subir_archivo_drive(
+                        ArchivoPendiente(
+                            f"Factura {numero}.pdf", "application/pdf", pdf
+                        ),
+                        carpeta,
+                    )
+
+                    concepto = articulo.strip()
+                    if cantidad > 1:
+                        concepto += f" (x{int(cantidad)})"
+                    if cliente_datos["nombre"]:
+                        concepto += f" · {cliente_datos['nombre']}"
+
+                    hoja_ingresos.append_row(
+                        [fecha_str, hora_str, numero, concepto,
+                         base, iva, total, link_drive],
+                        value_input_option="USER_ENTERED",
+                    )
+
+                    st.session_state["factura_creada"] = {
+                        "numero": numero,
+                        "pdf": pdf,
+                        "link": link_drive,
+                    }
+
+                except Exception as e:
+                    st.error(f"❌ No se pudo crear la factura: {e}")
+
+        creada = st.session_state.get("factura_creada")
+
+        if creada:
+
+            st.success(
+                f"✅ Factura {creada['numero']} creada y registrada."
+            )
+
+            st.download_button(
+                "📤 Descargar / compartir la factura",
+                data=creada["pdf"],
+                file_name=f"Factura {creada['numero']}.pdf",
+                mime="application/pdf",
+            )
+
+            st.markdown(f"📎 [Abrir en Google Drive]({creada['link']})")
+
+            if st.button("Nueva factura"):
+                del st.session_state["factura_creada"]
+                st.rerun()
 
 
 # ============================================================
